@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StorageCheck · 磁盘空间监控</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>StorageCheck</h1>
+        <p class="sub" id="hostline">—</p>
+      </div>
+    </div>
+    <div class="top-right">
+      <span id="statusPill" class="pill pill-ok">运行正常</span>
+      <span id="version" class="ver"></span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="dash">总览</button>
+    <button class="tab" data-tab="history">告警历史</button>
+    <button class="tab" data-tab="settings">设置</button>
+  </nav>
+
+  <main>
+    <section id="tab-dash" class="panel active">
+      <div class="section-head">
+        <h2>磁盘</h2>
+        <div class="section-actions">
+          <input id="applyAllPct" type="number" min="1" max="50" step="1" placeholder="阈值 %" class="mini-input">
+          <button class="btn ghost" id="applyAllBtn">应用到所有盘</button>
+          <button class="btn ghost" id="checkNowBtn">立即检查</button>
+        </div>
+      </div>
+      <div id="drives" class="drive-grid"></div>
+      <p id="emptyDrives" class="muted hidden">尚未发现可监控的磁盘。</p>
+    </section>
+
+    <section id="tab-history" class="panel">
+      <div class="section-head">
+        <h2>告警历史</h2>
+        <button class="btn ghost" id="refreshEventsBtn">刷新</button>
+      </div>
+      <div class="table-wrap">
+        <table class="events">
+          <thead><tr><th>时间</th><th>类型</th><th>磁盘</th><th>详情</th></tr></thead>
+          <tbody id="eventsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="panel">
+      <div class="card">
+        <h3>监控</h3>
+        <div class="form-grid">
+          <label>检查间隔（秒）<input id="inInterval" type="number" min="30" step="30"></label>
+          <label>重复告警间隔（秒）<input id="inCooldown" type="number" min="60" step="60"></label>
+          <label>恢复判定迟滞（百分点）<input id="inHyst" type="number" min="0" max="20" step="0.5"></label>
+          <label class="check"><input id="inNotify" type="checkbox"><span>空间恢复时发送邮件</span></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>邮件通知（SMTP）</h3>
+        <div class="form-grid">
+          <label>邮箱服务商
+            <select id="inPreset">
+              <option value="qq">QQ 邮箱</option>
+              <option value="163">163 邮箱</option>
+              <option value="exmail">腾讯企业邮箱</option>
+              <option value="aliyun">阿里企业邮箱</option>
+              <option value="gmail">Gmail</option>
+              <option value="outlook">Outlook / Office365</option>
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <label>服务器<input id="inHost" type="text" placeholder="smtp.qq.com"></label>
+          <label>端口<input id="inPort" type="number" min="1" max="65535" placeholder="465"></label>
+          <label>加密方式
+            <select id="inSecurity">
+              <option value="tls">SSL / 隐式 TLS（推荐 465）</option>
+              <option value="starttls">STARTTLS（通常 587）</option>
+              <option value="none">无加密（仅内网）</option>
+            </select>
+          </label>
+          <label>发件账号<input id="inUser" type="text" placeholder="alert@example.com"></label>
+          <label>授权码 / 密码
+            <input id="inPass" type="password" placeholder="留空表示不修改" autocomplete="new-password">
+            <small id="passHint" class="muted"></small>
+          </label>
+          <label>发件人显示名<input id="inAlias" type="text"></label>
+          <label>收件人（多个用英文逗号分隔）<input id="inRecipients" type="text" placeholder="you@example.com"></label>
+        </div>
+        <div class="card-actions">
+          <button class="btn ghost" id="smtpTestBtn">发送测试邮件</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>系统</h3>
+        <div class="form-grid">
+          <label class="check"><input id="inAutostart" type="checkbox"><span>开机自动启动 StorageCheck</span></label>
+          <label class="check"><input id="inMinimized" type="checkbox"><span>开机启动时不打开浏览器</span></label>
+        </div>
+      </div>
+
+      <div class="savebar">
+        <span id="saveMsg" class="muted"></span>
+        <button class="btn primary" id="saveBtn">保存设置</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="toasts"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
