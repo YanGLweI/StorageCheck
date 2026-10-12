@@ -12,7 +12,8 @@ import (
 type Manager interface {
 	Enable(exePath string, args []string) error
 	Disable() error
-	IsEnabled() (bool, error)
+	// Command 返回当前登记的启动命令；未启用时返回空串。
+	Command() (string, error)
 }
 
 // DevManager 仅供非 Windows 开发模式使用，把状态写在一个文件里。
@@ -34,13 +35,13 @@ func (d *DevManager) Disable() error {
 	return err
 }
 
-func (d *DevManager) IsEnabled() (bool, error) {
-	_, err := os.Stat(d.path())
+func (d *DevManager) Command() (string, error) {
+	data, err := os.ReadFile(d.path())
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return "", nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("autostart(dev): %w", err)
+		return "", fmt.Errorf("autostart(dev): %w", err)
 	}
-	return true, nil
+	return string(data), nil
 }

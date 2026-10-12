@@ -3,6 +3,7 @@
 package autostart
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -42,18 +43,19 @@ func (m *registryManager) Disable() error {
 	return nil
 }
 
-func (m *registryManager) IsEnabled() (bool, error) {
+// Command 读取 HKCU Run 里登记的启动命令；未配置时返回空串。
+func (m *registryManager) Command() (string, error) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.QUERY_VALUE)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	defer k.Close()
-	_, _, err = k.GetStringValue(valueName)
-	if err == registry.ErrNotExist {
-		return false, nil
+	v, _, err := k.GetStringValue(valueName)
+	if errors.Is(err, registry.ErrNotExist) {
+		return "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return v, nil
 }

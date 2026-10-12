@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"storagecheck/internal/autostart"
 	"storagecheck/internal/config"
 	"storagecheck/internal/mailer"
 	"storagecheck/internal/monitor"
@@ -95,6 +97,20 @@ func main() {
 	}
 	defer release()
 
+	// 开机自启以系统启动项为准：安装向导的勾选、手工改注册表都要回流到配置
+	am := newAutostartManager(dir)
+	exePath, exeErr := os.Executable()
+	if exeErr != nil {
+		log.Printf("无法确定自身路径，跳过开机自启状态同步: %v", exeErr)
+	} else if enabled, changed, aerr := autostart.Reconcile(am, exePath, []string{"--minimized"}, cfg.Autostart); aerr != nil {
+		log.Printf("同步开机自启状态失败: %v", aerr)
+	} else if changed {
+		cfg.Autostart = enabled
+		if err := store.Save(cfg); err != nil {
+			log.Printf("写入开机自启状态失败: %v", err)
+		}
+	}
+
 	col := newCollector(*dev)
 	mon, err := monitor.New(col, store, &liveSender{store}, version)
 	if err != nil {
@@ -105,13 +121,16 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	am := newAutostartManager(dir)
 	srv.SetAutostartFunc(func(enable bool) error {
-		exe, _ := os.Executable()
 		if enable {
-			return am.Enable(exe, []string{"--minimized"})
+			return am.Enable(exePath, []string{"--minimized"})
 		}
 		return am.Disable()
+	})
+	// 界面展示真实的启动项状态，而不是可能过期的配置缓存
+	srv.SetAutostartStateFunc(func() bool {
+		cmd, err := am.Command()
+		return err == nil && strings.TrimSpace(cmd) != ""
 	})
 	if err := srv.Start(); err != nil {
 		fatal(err)
@@ -119,14 +138,6 @@ func main() {
 
 	if err := writeRunFile(dir, runInfo{Port: srv.Port(), Token: srv.Token(), URL: srv.URL(), PID: os.Getpid()}); err != nil {
 		log.Printf("写入运行信息失败: %v", err)
-	}
-
-	// 开机自启：以配置为准同步注册表
-	if cfg.Autostart {
-		exe, _ := os.Executable()
-		if err := am.Enable(exe, []string{"--minimized"}); err != nil {
-			log.Printf("同步开机自启失败: %v", err)
-		}
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

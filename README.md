@@ -11,7 +11,7 @@ Windows 磁盘空间监控与邮件告警工具。剩余空间低于阈值时发
 - SMTP 预设：QQ / 163 / 腾讯企业邮 / 阿里企业邮 / Gmail / Outlook，亦可自定义（SSL 465、STARTTLS 587、内网免密）
 - 授权码使用 Windows DPAPI 加密落盘，界面永不回显
 - 托盘：打开控制台 / 暂停监控 / 立即检查 / 退出；任一磁盘告警时图标变红
-- 开机自启（HKCU Run 键，无需管理员），自启时以 `--minimized` 静默运行
+- 开机自启（HKCU Run 键，无需管理员），自启时以 `--minimized` 静默运行；以系统启动项为唯一事实来源，安装向导里勾选后程序会自动识别
 - 本地控制台仅监听 127.0.0.1，一次性 token 换 HttpOnly Cookie，API 全部鉴权
 
 ## 构建（macOS / Linux 交叉编译，无需 Windows）
@@ -52,7 +52,8 @@ internal/monitor      告警状态机（平台无关，Linux 版直接复用）
 internal/mailer       SMTP 与 HTML 邮件模板
 internal/autostart    开机自启（HKCU Run / dev 标记文件）
 internal/server       本地 Web 服务 + go:embed 前端
-internal/tray         托盘与图标绘制
+internal/tray         托盘与菜单
+internal/appicon      程序化图标绘制与 ICO 编码（托盘/exe/安装包共用）
 tools/genres          Windows 资源(.syso)生成器
 tools/genico          安装包图标(.ico)生成器
 build/installer.nsi   NSIS 安装脚本

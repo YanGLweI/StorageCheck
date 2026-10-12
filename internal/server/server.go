@@ -33,11 +33,15 @@ type Server struct {
 	srv      *http.Server
 	baseURL  string
 
-	onAutostart func(enable bool) error
+	onAutostart    func(enable bool) error
+	autostartState func() bool
 }
 
 // SetAutostartFunc 注册开机自启应用回调（保存配置时调用）。
 func (s *Server) SetAutostartFunc(fn func(enable bool) error) { s.onAutostart = fn }
+
+// SetAutostartStateFunc 注册开机自启状态查询回调（读取系统启动项，而非配置缓存）。
+func (s *Server) SetAutostartStateFunc(fn func() bool) { s.autostartState = fn }
 
 // Opened 返回一次性访问地址（带 token），浏览器访问后转为 Cookie。
 func New(mon *monitor.Monitor, store *config.Store, version string) (*Server, error) {
@@ -169,7 +173,11 @@ type putSMTP struct {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		cfg := s.mon.Config()
+		view := *s.mon.Config()
+		// 开机自启展示系统启动项的真实状态，避免界面与注册表不一致
+		if s.autostartState != nil {
+			view.Autostart = s.autostartState()
+		}
 		type smtpView struct {
 			config.SMTPConfig
 			HasPass bool `json:"has_pass"`
@@ -177,10 +185,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		out := struct {
 			*config.Config
 			SMTP smtpView `json:"smtp"`
-		}{Config: cfg}
-		sv := smtpView{SMTPConfig: cfg.SMTP}
+		}{Config: &view}
+		sv := smtpView{SMTPConfig: view.SMTP}
 		sv.SMTPConfig.PassEnc = ""
-		sv.HasPass = cfg.SMTP.PassEnc != ""
+		sv.HasPass = view.SMTP.PassEnc != ""
 		out.SMTP = sv
 		writeJSON(w, out)
 		return
@@ -254,7 +262,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errJSON(err), http.StatusBadRequest)
 		return
 	}
-	if p.Autostart != nil && s.onAutostart != nil {
+	if p.Autostart != nil && s.onAutostart != nil && (s.autostartState == nil || *p.Autostart != s.autostartState()) {
 		if aerr := s.onAutostart(*p.Autostart); aerr != nil {
 			writeJSON(w, map[string]any{"ok": true, "warning": "设置已保存，但开机自启切换失败：" + aerr.Error()})
 			return
