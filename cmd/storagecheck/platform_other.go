@@ -39,6 +39,9 @@ func openBrowser(url string) {
 	}
 }
 
+// presentOrOpenConsole 非 Windows 开发模式没有窗口前置概念，直接打开。
+func presentOrOpenConsole(url string, port int) { openBrowser(url) }
+
 // acquireLock 非 Windows 使用 pid 锁文件（仅开发模式路径）。
 func acquireLock(dir string) (func(), bool, error) {
 	p := filepath.Join(dir, ".lock")

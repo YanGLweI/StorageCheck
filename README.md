@@ -10,7 +10,8 @@ Windows 磁盘空间监控与邮件告警工具。剩余空间低于阈值时发
 - 邮件失败自动进入重试窗口，事件写入历史与 `events.log`
 - SMTP 预设：QQ / 163 / 腾讯企业邮 / 阿里企业邮 / Gmail / Outlook，亦可自定义（SSL 465、STARTTLS 587、内网免密）
 - 授权码使用 Windows DPAPI 加密落盘，界面永不回显
-- 托盘：打开控制台 / 暂停监控 / 立即检查 / 退出；任一磁盘告警时图标变红
+- 托盘：左键唤起控制台窗口（窗口不存在则新建），右键弹出菜单——打开控制台 / 暂停监控 / 立即检查 / 退出；任一磁盘告警时图标变红
+- 再次启动（双击快捷方式）不会开出第二个界面，而是把已打开的控制台窗口还原并调到前台
 - 开机自启（HKCU Run 键，无需管理员），自启时以 `--minimized` 静默运行；以系统启动项为唯一事实来源，安装向导里勾选后程序会自动识别
 - 本地控制台仅监听 127.0.0.1，一次性 token 换 HttpOnly Cookie，API 全部鉴权
 
@@ -44,7 +45,7 @@ STORAGECHECK_DEV_FREEPCT=8 \
 ## 目录结构
 
 ```
-cmd/storagecheck      入口：装配、单实例、托盘、浏览器
+cmd/storagecheck      入口：装配、单实例、托盘、窗口前置与浏览器
 internal/model        数据结构
 internal/collector    磁盘采集（Win32 API / dev Fake）
 internal/config       配置读写（原子保存、授权码加密）

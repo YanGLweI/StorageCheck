@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"os/exec"
@@ -28,18 +29,12 @@ func newCollector(dev bool) collector.Collector {
 	return collector.New()
 }
 
+// openBrowser 只负责新建一个 Edge 应用窗口；唤起已有窗口见 presentOrOpenConsole。
 func openBrowser(url string) {
 	if edge, ok := findEdge(); ok {
-		// 独立 profile + --app：无地址栏/标签页的桌面窗口观感，重复打开由浏览器聚焦原窗口
-		cmd := exec.Command(edge,
-			"--app="+url,
-			"--user-data-dir="+webviewProfileDir(),
-			"--no-first-run",
-			"--no-default-browser-check",
-		)
+		cmd := exec.Command(edge, edgeAppArgs(url, webviewProfileDir())...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if err := cmd.Start(); err == nil {
-			appWindow = cmd
 			go cmd.Wait()
 			return
 		} else {
@@ -48,8 +43,6 @@ func openBrowser(url string) {
 	}
 	exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 }
-
-var appWindow *exec.Cmd
 
 func findEdge() (string, bool) {
 	for _, env := range []string{"ProgramFiles(x86)", "ProgramFiles", "LocalAppData"} {
@@ -86,7 +79,13 @@ func acquireLock(dir string) (func(), bool, error) {
 		return nil, false, err
 	}
 	h, err := windows.CreateMutex(nil, false, name)
+	// 互斥量已存在时 CreateMutex 仍返回有效句柄，并用 ERROR_ALREADY_EXISTS 说明情况，
+	// x/sys 把它作为 err 返回。这不是失败：第二个实例应唤起已有窗口后退出。
 	if err != nil {
+		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			windows.CloseHandle(h)
+			return func() {}, false, nil
+		}
 		return nil, false, err
 	}
 	if windows.GetLastError() == errorAlreadyExists {

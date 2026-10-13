@@ -90,8 +90,14 @@ func main() {
 		fatal(err)
 	}
 	if !acquired {
-		if u := readRunURL(dir); u != "" && !*minimized {
-			openBrowser(u)
+		ri, ok := readRunInfo(dir)
+		switch {
+		case !ok || ri.URL == "":
+			log.Println("已有实例在运行，但读不到 run.json，无法唤起其窗口")
+		case *minimized:
+			log.Println("已有实例在运行，--minimized 启动故不唤起窗口")
+		default:
+			presentOrOpenConsole(ri.URL, ri.Port)
 		}
 		return
 	}
@@ -146,7 +152,7 @@ func main() {
 
 	consoleURL := srv.URL()
 	if !*minimized {
-		openBrowser(consoleURL)
+		presentOrOpenConsole(consoleURL, srv.Port())
 	}
 
 	// 托盘图标跟随最坏告警状态
@@ -160,7 +166,7 @@ func main() {
 	}
 
 	tray.Register(tray.Handlers{
-		OnOpen:  func() { openBrowser(consoleURL) },
+		OnOpen:  func() { presentOrOpenConsole(consoleURL, srv.Port()) },
 		OnCheck: mon.Trigger,
 		OnPauseToggle: func() bool {
 			p := !mon.Paused()
@@ -209,16 +215,16 @@ func mustDir() string {
 	return dir
 }
 
-func readRunURL(dir string) string {
+func readRunInfo(dir string) (runInfo, bool) {
 	data, err := os.ReadFile(filepath.Join(dir, "run.json"))
 	if err != nil {
-		return ""
+		return runInfo{}, false
 	}
 	var ri runInfo
 	if json.Unmarshal(data, &ri) != nil {
-		return ""
+		return runInfo{}, false
 	}
-	return ri.URL
+	return ri, true
 }
 
 func writeRunFile(dir string, ri runInfo) error {

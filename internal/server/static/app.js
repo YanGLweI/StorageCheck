@@ -3,6 +3,9 @@
 const $ = (sel) => document.querySelector(sel);
 const GIB = 1024 ** 3;
 
+// 标题带端口：程序据此在已打开的应用窗口中认出本次会话，重复启动时前置它而不是再开一个。
+document.title = `${document.title} · ${location.port}`;
+
 const PRESETS = {
   qq:      { host: "smtp.qq.com",        port: 465, security: "tls" },
   "163":   { host: "smtp.163.com",       port: 465, security: "tls" },

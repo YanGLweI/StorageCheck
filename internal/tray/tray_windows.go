@@ -19,6 +19,7 @@ type Handlers struct {
 var (
 	h        Handlers
 	statusCh = make(chan bool, 1)
+	openCh   = make(chan struct{}, 1)
 )
 
 func Register(hh Handlers) { h = hh }
@@ -49,10 +50,22 @@ func onReady() {
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("退出", "退出 StorageCheck")
 
+	// 左键（含双击的两次按键抬起）唤起控制台窗口；不注册右键回调，右键才会落到默认弹出菜单。
+	systray.SetOnTapped(func() {
+		select {
+		case openCh <- struct{}{}:
+		default:
+		}
+	})
+
 	go func() {
 		lastAlert := false
 		for {
 			select {
+			case <-openCh:
+				if h.OnOpen != nil {
+					h.OnOpen()
+				}
 			case <-mOpen.ClickedCh:
 				if h.OnOpen != nil {
 					h.OnOpen()
