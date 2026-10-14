@@ -47,10 +47,11 @@ fi # build_windows
 
 if [ "$build_linux" = 1 ]; then
   # build-linux.sh 自带 GOOS=linux go vet 守卫（标签漏写会在那里报错）
-  if [ "$TARGET" = rpm ]; then
-    ./build-linux.sh "$VERSION"
-  else
+  # 只有单指 linux 时才跳过 RPM：发版路径（rpm/all）必须真的把包装出来
+  if [ "$TARGET" = linux ]; then
     ./build-linux.sh "$VERSION" --bins-only
+  else
+    ./build-linux.sh "$VERSION"
   fi
 fi
 
