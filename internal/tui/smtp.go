@@ -22,7 +22,7 @@ var smtpPresets = []smtpPreset{
 	{"qq", "QQ 邮箱", "smtp.qq.com", "tls", 465},
 	{"163", "网易 163", "smtp.163.com", "tls", 465},
 	{"exmail", "腾讯企业邮", "smtp.exmail.qq.com", "tls", 465},
-	{"aliyun", "阿里企业邮", "smtp.mxhichina.com", "tls", 465},
+	{"aliyun", "阿里企业邮", "smtp.qiye.aliyun.com", "tls", 465},
 	{"gmail", "Gmail", "smtp.gmail.com", "tls", 465},
 	{"outlook", "Office365", "smtp.office365.com", "starttls", 587},
 	{"custom", "自定义", "", "tls", 465},

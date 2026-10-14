@@ -7,12 +7,12 @@ const GIB = 1024 ** 3;
 document.title = `${document.title} · ${location.port}`;
 
 const PRESETS = {
-  qq:      { host: "smtp.qq.com",        port: 465, security: "tls" },
-  "163":   { host: "smtp.163.com",       port: 465, security: "tls" },
-  exmail:  { host: "smtp.exmail.qq.com", port: 465, security: "tls" },
-  aliyun:  { host: "smtp.mxhichina.com", port: 465, security: "tls" },
-  gmail:   { host: "smtp.gmail.com",     port: 465, security: "tls" },
-  outlook: { host: "smtp.office365.com", port: 587, security: "starttls" },
+  qq:      { host: "smtp.qq.com",          port: 465, security: "tls" },
+  "163":   { host: "smtp.163.com",         port: 465, security: "tls" },
+  exmail:  { host: "smtp.exmail.qq.com",   port: 465, security: "tls" },
+  aliyun:  { host: "smtp.qiye.aliyun.com", port: 465, security: "tls" },
+  gmail:   { host: "smtp.gmail.com",       port: 465, security: "tls" },
+  outlook: { host: "smtp.office365.com",   port: 587, security: "starttls" },
 };
 
 let state = null;   // /api/state
