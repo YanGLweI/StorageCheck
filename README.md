@@ -20,6 +20,7 @@ Windows 磁盘空间监控与邮件告警工具。剩余空间低于阈值时发
 ```bash
 brew install nsis      # 一次性
 ./build.sh 1.0.0       # 产出 dist/ 下的绿色 exe 与安装包
+./build.sh 1.1.0 all   # Windows + Linux（静态二进制 + RPM）一起出
 ```
 
 `build.sh` 依次完成：
@@ -45,19 +46,22 @@ STORAGECHECK_DEV_FREEPCT=8 \
 ## 目录结构
 
 ```
-cmd/storagecheck      入口：装配、单实例、托盘、窗口前置与浏览器
+cmd/storagecheck      入口：装配、单实例、托盘、窗口前置与浏览器；Linux 侧为命令树与终端界面
 internal/model        数据结构
-internal/collector    磁盘采集（Win32 API / dev Fake）
+internal/collector    磁盘采集（Win32 API / Linux mounts+statfs / dev Fake）
 internal/config       配置读写（原子保存、授权码加密）
 internal/monitor      告警状态机（平台无关，Linux 版直接复用）
 internal/mailer       SMTP 与 HTML 邮件模板
-internal/autostart    开机自启（HKCU Run / dev 标记文件）
-internal/server       本地 Web 服务 + go:embed 前端
+internal/autostart    开机自启（HKCU Run / systemd 单元 / dev 标记文件）
+internal/state        Linux 侧状态快照与守护进程 pid 发现
+internal/tui          Linux 终端拟态界面（仅 linux 编译）
+internal/server       本地 Web 服务 + go:embed 前端（Windows 与 dev，Linux 不链接）
 internal/tray         托盘与菜单
 internal/appicon      程序化图标绘制与 ICO 编码（托盘/exe/安装包共用）
 tools/genres          Windows 资源(.syso)生成器
 tools/genico          安装包图标(.ico)生成器
 build/installer.nsi   NSIS 安装脚本
+build/storagecheck.{service,spec}  Linux systemd 单元与 RPM 打包
 ```
 
 ## 数据位置
@@ -65,6 +69,10 @@ build/installer.nsi   NSIS 安装脚本
 配置与日志位于 `%APPDATA%\StorageCheck`（macOS 开发模式在 `~/Library/Application Support/StorageCheck`）：
 `config.json`、`events.log`、`storagecheck.log`、`run.json`。
 
+Linux 版为 `/etc/storagecheck/config.json`（配置与 `seal.key`）和 `/var/lib/storagecheck/`（`state.json`、`events.log`），
+日志进 journald，详见 [README-linux.md](README-linux.md)。
+
 ## 路线图
 
-- Linux（RHEL 9/10）无 GUI 版：statfs 采集器 + systemd 单元 + `storagecheck config` 命令行，复用 internal 库
+- Windows 版：已完成（v1.0.x，托盘 + Web 控制台 + NSIS 安装包）
+- Linux（RHEL 9/10）无 GUI 版：已完成，statfs 采集器 + systemd 服务 + 终端拟态配置界面，RPM 交付，见 [README-linux.md](README-linux.md)

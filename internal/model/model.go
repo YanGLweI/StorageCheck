@@ -15,6 +15,15 @@ type DriveStat struct {
 type EventKind string
 
 const (
+	// StateFileName 是守护进程原子写入的状态快照，EventsFileName 是机器可读的事件流。
+	// 无 GUI 形态下这两个文件是外部唯一的状态来源。
+	StateFileName  = "state.json"
+	EventsFileName = "events.log"
+	// LockFileName 是单实例锁，里面写着守护进程的 pid，CLI 与界面据此发信号。
+	LockFileName = ".lock"
+)
+
+const (
 	KindAlert   EventKind = "alert"
 	KindRecover EventKind = "recovery"
 	KindInfo    EventKind = "info"

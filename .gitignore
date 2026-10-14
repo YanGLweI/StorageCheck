@@ -3,6 +3,8 @@
 /build/icon.ico
 /cmd/storagecheck/rsrc_windows_*.syso
 *.exe
+# go build ./cmd/storagecheck 直接落在仓库根的裸二进制
+/storagecheck
 
 # 本地杂项
 .DS_Store

@@ -1,0 +1,34 @@
+[Unit]
+Description=StorageCheck 磁盘空间监控与邮件告警
+Documentation=man:storagecheck
+# 监控要在网络可用后才能发信；Ordered 保证 DNS/网络就绪，避免启动即告警「SMTP 不可达」
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/storagecheck run --config-dir /etc/storagecheck
+# 配置由终端界面写入，重载只发信号：重启会丢冷却/迟滞状态，导致同一故障重复告警
+ExecReload=/bin/kill -HUP $MAINPID
+EnvironmentFile=-/etc/sysconfig/storagecheck
+# 可选：授权码走 systemd 凭据通道，避免密钥文件与配置同目录
+#   LoadCredential=smtp_password:/etc/storagecheck/smtp_password
+# 用 root 采集才能看到全部挂载点（含 /home 与数据卷）。
+# 若要降权，加 drop-in 指定 User=storagecheck，并保证该用户可读挂载点目录。
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+# 监控不能和生产抢 I/O：CPU/IO 都放到最低优先级
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storagecheck
+# 不写 ProtectHome/ProtectSystem=strict：会挡住 /home、/mnt、/data 的采集
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

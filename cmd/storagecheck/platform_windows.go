@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -15,14 +16,29 @@ import (
 	"storagecheck/internal/autostart"
 	"storagecheck/internal/collector"
 	"storagecheck/internal/config"
+	"storagecheck/internal/monitor"
 	"storagecheck/internal/secret"
+	"storagecheck/internal/tray"
 )
 
 func newSecretBox(dir string) config.SecretBox { return secret.NewDPAPIBox() }
 
 func newAutostartManager(dir string) autostart.Manager { return autostart.New() }
 
-func newCollector(dev bool) collector.Collector {
+// setupLogging：桌面版把日志写进配置目录（没有事件日志查看器）。
+func setupLogging(dir string) {
+	f, err := os.OpenFile(filepath.Join(dir, "storagecheck.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	log.SetOutput(f)
+}
+
+func credentialPath() string { return "" }
+
+func autostartArgs() []string { return []string{"--minimized"} }
+
+func newCollector(dev bool, cfg func() *config.Config) collector.Collector {
 	if dev {
 		return devDrives()
 	}
@@ -93,4 +109,20 @@ func acquireLock(dir string) (func(), bool, error) {
 		return func() {}, false, nil
 	}
 	return func() { windows.CloseHandle(h) }, true, nil
+}
+
+// defaultBlock：桌面版阻塞在托盘消息循环里，退出菜单触发 cancel 后返回。
+func defaultBlock(ctx context.Context, cancel context.CancelFunc, mon *monitor.Monitor, c console, monDone chan struct{}) {
+	go syncTrayIcon(ctx, mon)
+	tray.Register(tray.Handlers{
+		OnOpen:  func() { presentOrOpenConsole(c.URL(), c.Port()) },
+		OnCheck: mon.Trigger,
+		OnPauseToggle: func() bool {
+			p := !mon.Paused()
+			mon.SetPaused(p)
+			return p
+		},
+		OnQuit: cancel,
+	})
+	tray.Run()
 }

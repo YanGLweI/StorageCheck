@@ -1,3 +1,8 @@
+// 桌面控制台（Windows 窗口 / macOS 开发态浏览器）专用的窗口识别 helper。
+// Linux 版没有控制台，故整组代码不参与 Linux 编译。
+
+//go:build !linux
+
 package main
 
 import (

@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
-# 在 macOS/Linux 上交叉编译 Windows 版 StorageCheck（含安装包，无需 Windows/Wine/Docker）
+# 交叉编译 StorageCheck：Windows（exe + NSIS 安装包）、Linux（静态二进制 + RPM）
+# 用法：./build.sh <版本> [windows|linux|rpm|all]
+#   不带第二个参数时保持历史行为 —— 只打 Windows 包
 set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION="${1:-1.0.0}"
+TARGET="${2:-windows}"
 mkdir -p dist
 
+build_windows=0
+build_linux=0
+case "$TARGET" in
+  windows) build_windows=1 ;;
+  linux)   build_linux=1 ;;
+  rpm)     build_linux=1 ;;
+  all)     build_windows=1; build_linux=1 ;;
+  *) echo "未知目标: $TARGET（可用 windows|linux|rpm|all）" >&2; exit 2 ;;
+esac
+
+if [ "$build_windows" = 1 ]; then
 # 1. Windows 资源（exe 图标/版本信息/manifest）随版本号重新生成
 go run ./tools/genres "$VERSION"
 
@@ -28,6 +42,16 @@ if command -v makensis >/dev/null; then
   done
 else
   echo "警告: 未找到 makensis（brew install nsis），跳过安装包" >&2
+fi
+fi # build_windows
+
+if [ "$build_linux" = 1 ]; then
+  # build-linux.sh 自带 GOOS=linux go vet 守卫（标签漏写会在那里报错）
+  if [ "$TARGET" = rpm ]; then
+    ./build-linux.sh "$VERSION"
+  else
+    ./build-linux.sh "$VERSION" --bins-only
+  fi
 fi
 
 ls -la dist/

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package collector
 
@@ -8,8 +8,7 @@ import (
 	"storagecheck/internal/model"
 )
 
-// 非 Windows 平台（macOS 开发模式）不提供真实采集器，由 --dev 注入 Fake。
-// 后续 Linux 版将在此提供 statfs 实现。
+// 非 Windows/Linux 平台（macOS 开发模式）不提供真实采集器，由 --dev 注入 Fake。
 func New() Collector { return &stubCollector{} }
 
 type stubCollector struct{}

@@ -1,6 +1,7 @@
 package mailer
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -46,7 +47,7 @@ func (m *Mailer) Send(subject, bodyHTML string) error {
 	case "starttls":
 		return m.sendSTARTTLS(addr, auth, c.User, c.Recipients, body)
 	default: // none —— 仅内网免认证 SMTP 场景
-		cl, err := smtp.Dial(addr)
+		cl, err := m.client(addr, false)
 		if err != nil {
 			return err
 		}
@@ -60,14 +61,48 @@ func (m *Mailer) Send(subject, bodyHTML string) error {
 	}
 }
 
-func (m *Mailer) sendImplicitTLS(addr string, auth smtp.Auth, from string, to []string, body []byte) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: m.cfg.Host})
+// 无超时的 dial 会在 SMTP 不可达时永久挂住调用方（监控循环、终端界面），
+// 因此连接与整个会话都受 deadline 约束。
+const (
+	dialTimeout    = 15 * time.Second
+	sessionTimeout = 60 * time.Second
+)
+
+// client 建立带超时的连接；implicit 为真时先完成隐式 TLS 握手，
+// 为假时返回明文连接，由调用方按需 StartTLS。
+func (m *Mailer) client(addr string, implicit bool) (*smtp.Client, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	var dialer net.Dialer
+	raw, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var conn net.Conn = raw
+	if implicit {
+		if err := raw.SetDeadline(time.Now().Add(dialTimeout)); err != nil {
+			raw.Close()
+			return nil, err
+		}
+		tlsConn := tls.Client(raw, &tls.Config{ServerName: m.cfg.Host})
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			raw.Close()
+			return nil, err
+		}
+		conn = tlsConn
+	}
+	conn.SetDeadline(time.Now().Add(sessionTimeout))
 	cl, err := smtp.NewClient(conn, m.cfg.Host)
 	if err != nil {
 		conn.Close()
+		return nil, err
+	}
+	return cl, nil
+}
+
+func (m *Mailer) sendImplicitTLS(addr string, auth smtp.Auth, from string, to []string, body []byte) error {
+	cl, err := m.client(addr, true)
+	if err != nil {
 		return err
 	}
 	defer cl.Quit()
@@ -78,7 +113,7 @@ func (m *Mailer) sendImplicitTLS(addr string, auth smtp.Auth, from string, to []
 }
 
 func (m *Mailer) sendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, body []byte) error {
-	cl, err := smtp.Dial(addr)
+	cl, err := m.client(addr, false)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "check_interval_sec": 300,
+  "cooldown_sec": 21600,
+  "recovery_hysteresis_pct": 2,
+  "notify_on_recovery": true,
+  "drives": [],
+  "smtp": {
+    "preset": "custom",
+    "host": "",
+    "port": 465,
+    "security": "tls",
+    "user": "",
+    "from_alias": "StorageCheck 磁盘监控",
+    "recipients": []
+  },
+  "autostart": true,
+  "auto_enable_new": false,
+  "linux": {
+    "include_network": false,
+    "min_total_bytes": 1073741824
+  }
+}

@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,10 +25,13 @@ type Sender interface {
 }
 
 const (
-	fastInterval = 30 * time.Second // 廉价采样节奏
-	deltaGate    = 2.0              // 剩余百分比变化超过该值时提前评估
-	sendRetryGap = 15 * time.Minute // 发信失败后的最早重试
-	eventsMem    = 500              // 内存环形缓冲条数
+	fastInterval    = 30 * time.Second    // 廉价采样节奏
+	deltaGate       = 2.0                 // 剩余百分比变化超过该值时提前评估
+	sendRetryGap    = 15 * time.Minute    // 发信失败后的最早重试
+	eventsMem       = 500                 // 内存环形缓冲条数
+	eventsMaxBytes  = 5 << 20             // 事件日志单文件大小上限，超过即轮转
+	eventsKeep      = 3                   // 轮转保留的历史文件数
+	stalePruneAfter = 30 * 24 * time.Hour // 未启用且长期不存在的挂载条目在保存时清理
 )
 
 type driveRuntime struct {
@@ -72,6 +77,19 @@ type Monitor struct {
 	events   []model.Event
 	paused   bool
 
+	// lastSeen 记录每个配置条目最后一次实际出现的时刻，用于清理长期消失的未启用条目。
+	lastSeen map[string]time.Time
+	// statePath 是当前状态快照文件；CLI/TUI 通过它读取实时用量，取代原 Web API。
+	statePath string
+	stateFP   string
+	// cfgFP 是配置内容的哈希。守护进程自己写盘（登记新盘）不会触发重载，
+	// 只有终端界面改动的哈希与记录值不同才认定外部修改。
+	cfgFP string
+	// lastSummary 控制「最差磁盘」心跳日志的节流。
+	lastSummary time.Time
+	// sends 是在途发信计数，停止时需要等它归零，避免半封邮件。
+	sends atomic.Int64
+
 	trigger chan struct{}
 	force   atomic.Bool // 置位时下一次 tick 跳过采样周期判断，立即评估
 	hubs    []chan model.Event
@@ -85,18 +103,39 @@ func New(col collector.Collector, store *config.Store, send Sender, version stri
 		return nil, err
 	}
 	m := &Monitor{
-		col:      col,
-		store:    store,
-		send:     send,
-		host:     host,
-		logPath:  filepath.Join(store.Dir(), "events.log"),
-		version:  version,
-		cfg:      cfg,
-		runtimes: map[string]*driveRuntime{},
-		stats:    map[string]model.DriveStat{},
-		trigger:  make(chan struct{}, 1),
+		col:       col,
+		store:     store,
+		send:      send,
+		host:      host,
+		logPath:   filepath.Join(store.DataDir(), model.EventsFileName),
+		statePath: filepath.Join(store.DataDir(), model.StateFileName),
+		version:   version,
+		cfg:       cfg,
+		runtimes:  map[string]*driveRuntime{},
+		stats:     map[string]model.DriveStat{},
+		lastSeen:  map[string]time.Time{},
+		trigger:   make(chan struct{}, 1),
 	}
+	for _, d := range cfg.Drives {
+		m.lastSeen[d.ID] = time.Now()
+	}
+	m.syncFingerprint()
 	return m, nil
+}
+
+func (m *Monitor) syncFingerprint() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recomputeFingerprintLocked()
+}
+
+// recomputeFingerprintLocked 记录「当前磁盘内容」的哈希，调用方需持有 m.mu。
+func (m *Monitor) recomputeFingerprintLocked() {
+	fp, err := m.store.Fingerprint()
+	if err != nil {
+		return
+	}
+	m.cfgFP = fp
 }
 
 func (m *Monitor) Hostname() string { return m.host }
@@ -142,10 +181,47 @@ func (m *Monitor) UpdateConfig(fn func(*config.Config) error) error {
 		return err
 	}
 	m.cfg = &clone
+	m.recomputeFingerprintLocked()
 	// 阈值/开关等配置本身就是状态输入：改完立刻重新评估，界面即时反映
 	m.force.Store(true)
 	m.wake()
 	return nil
+}
+
+// Reload 从磁盘重新读取配置并立即生效，不写盘。
+// 终端界面（独立进程）保存配置后发 SIGHUP，或由监控循环发现文件变化时调用。
+func (m *Monitor) Reload() error {
+	cfg, err := m.store.Load()
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.cfg = cfg
+	m.mu.Unlock()
+	m.syncFingerprint()
+	m.force.Store(true)
+	m.wake()
+	m.record(model.Event{Time: time.Now(), Kind: model.KindInfo, Message: "配置已重新加载"})
+	return nil
+}
+
+// ConfigChangedExternally 报告配置文件是否被其它进程改过（监控循环每个 tick 检查）。
+func (m *Monitor) ConfigChangedExternally() bool {
+	fp, err := m.store.Fingerprint()
+	if err != nil || fp == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return fp != m.cfgFP
+}
+
+// WaitSends 等待在途的邮件发送完成，用于停止时不留半封邮件。
+func (m *Monitor) WaitSends(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for m.sends.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (m *Monitor) Config() *config.Config {
@@ -177,9 +253,17 @@ func (m *Monitor) tickSafe() {
 			m.record(model.Event{Time: time.Now(), Kind: model.KindError, Message: fmt.Sprintf("监控循环异常: %v", r)})
 		}
 	}()
+	// 终端界面是独立进程，改配置只落文件；用内容哈希发现外部修改后立即生效。
+	if m.ConfigChangedExternally() {
+		if err := m.Reload(); err != nil {
+			m.record(model.Event{Time: time.Now(), Kind: model.KindError, Message: "重新加载配置失败: " + err.Error()})
+		}
+	}
 	if err := m.tick(); err != nil {
 		m.record(model.Event{Time: time.Now(), Kind: model.KindError, Message: "采集失败: " + err.Error()})
 	}
+	m.publishState()
+	m.logSummary()
 }
 
 func (m *Monitor) tick() error {
@@ -192,26 +276,61 @@ func (m *Monitor) tick() error {
 	m.stats = make(map[string]model.DriveStat, len(stats))
 	for _, s := range stats {
 		m.stats[s.ID] = s
+		m.lastSeen[s.ID] = now
 	}
-	// 新盘自动纳入监控（默认启用、默认阈值）
+	// 新盘登记：Windows（auto_enable_new 未设置或为真）沿用自动启用；
+	// Linux 安装包把它设为 false —— 首次安装（配置里一条都没有）时全量启用，
+	// 之后新出现的挂载点只登记为未启用并记一条事件，由管理员在界面里决定。
 	changed := false
+	firstRun := len(m.cfg.Drives) == 0
+	var justDiscovered []string
 	for _, s := range stats {
-		if _, ok := m.cfg.Drive(s.ID); !ok {
-			m.cfg.Drives = append(m.cfg.Drives, config.DriveConfig{ID: s.ID, Enabled: true, ThresholdPct: config.DefaultThresholdPct})
-			changed = true
+		if _, ok := m.cfg.Drive(s.ID); ok {
+			continue
 		}
+		enable := m.cfg.AutoEnableNewDrives() || firstRun
+		m.cfg.Drives = append(m.cfg.Drives, config.DriveConfig{ID: s.ID, Enabled: enable, ThresholdPct: config.DefaultThresholdPct})
+		changed = true
+		if !enable {
+			justDiscovered = append(justDiscovered, s.ID)
+		}
+	}
+	// 长期消失且未启用的条目清理，避免配置里堆满历史挂载点
+	pruned := 0
+	keptDrives := m.cfg.Drives[:0]
+	for _, d := range m.cfg.Drives {
+		seen, ok := m.lastSeen[d.ID]
+		if !ok {
+			seen = now
+		}
+		if _, present := m.stats[d.ID]; present || d.Enabled || now.Sub(seen) < stalePruneAfter {
+			keptDrives = append(keptDrives, d)
+			continue
+		}
+		pruned++
+	}
+	if pruned > 0 {
+		m.cfg.Drives = keptDrives
+		changed = true
 	}
 	if changed {
 		if err := m.store.Save(m.cfg); err != nil {
 			m.mu.Unlock()
 			return fmt.Errorf("保存新盘配置失败: %w", err)
 		}
+		m.recomputeFingerprintLocked()
 	}
 	paused := m.paused
 	interval := time.Duration(m.cfg.CheckIntervalSec) * time.Second
 	cfgSnap := *m.cfg
 	cfgSnap.Drives = append([]config.DriveConfig(nil), m.cfg.Drives...)
 	m.mu.Unlock()
+
+	// 锁外记事件：自动发现但未被启用的挂载点要让管理员看得见
+	for _, id := range justDiscovered {
+		m.record(model.Event{Time: now, Kind: model.KindInfo, Drive: id,
+			Message: fmt.Sprintf("发现未监控的挂载点 %s，可在终端界面的磁盘配置中启用", id)})
+	}
 
 	if paused {
 		return nil
@@ -274,7 +393,10 @@ func (m *Monitor) evaluate(rt *driveRuntime, now time.Time, s model.DriveStat, d
 		local.lastAlert = time.Time{}
 		m.record(model.Event{Time: now, Kind: model.KindRecover, Drive: s.ID, Message: fmt.Sprintf("%s 空间已恢复（剩余 %.1f%%）", s.ID, s.FreePct), FreePct: s.FreePct, Threshold: thr})
 		if cfg.NotifyOnRecovery {
-			if err := m.send.SendRecovery(m.host, s.ID, s.Label, s.Total, s.Free, s.UsedPct, s.FreePct, thr); err != nil {
+			m.sends.Add(1)
+			err := m.send.SendRecovery(m.host, s.ID, s.Label, s.Total, s.Free, s.UsedPct, s.FreePct, thr)
+			m.sends.Add(-1)
+			if err != nil {
 				m.record(model.Event{Time: now, Kind: model.KindError, Drive: s.ID, Message: "恢复邮件发送失败: " + err.Error()})
 			}
 		}
@@ -291,6 +413,8 @@ func (m *Monitor) evaluate(rt *driveRuntime, now time.Time, s model.DriveStat, d
 }
 
 func (m *Monitor) fireAlert(rt *driveRuntime, now time.Time, s model.DriveStat, thr float64, escalated bool) {
+	m.sends.Add(1)
+	defer m.sends.Add(-1)
 	err := m.send.SendAlert(m.host, s.ID, s.Label, s.Total, s.Free, s.UsedPct, s.FreePct, thr, escalated)
 	if err != nil {
 		rt.nextTry = now.Add(sendRetryGap)
@@ -317,17 +441,67 @@ func (m *Monitor) record(ev model.Event) {
 	hubs := append([]chan model.Event(nil), m.hubs...)
 	m.mu.Unlock()
 
-	if f, err := os.OpenFile(m.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-		line, _ := json.Marshal(ev)
-		f.Write(append(line, '\n'))
-		f.Close()
-	}
+	line, _ := json.Marshal(ev)
+	m.appendEventLog(append(line, '\n'))
+
 	for _, h := range hubs {
 		select {
 		case h <- ev:
 		default:
 		}
 	}
+}
+
+// appendEventLog 追加事件，超过上限先轮转，避免无界增长。
+func (m *Monitor) appendEventLog(line []byte) {
+	if st, err := os.Stat(m.logPath); err == nil && st.Size() > eventsMaxBytes {
+		for i := eventsKeep - 1; i >= 1; i-- {
+			os.Rename(fmt.Sprintf("%s.%d", m.logPath, i), fmt.Sprintf("%s.%d", m.logPath, i+1))
+		}
+		os.Rename(m.logPath, m.logPath+".1")
+	}
+	f, err := os.OpenFile(m.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	f.Write(line)
+	f.Close()
+}
+
+// publishState 写出实时快照，供 storagecheck status / 终端界面读取（无端口、无 IPC）。
+// 内容未变化时不写盘，减少对生产磁盘的额外 I/O。
+func (m *Monitor) publishState() {
+	view := m.Snapshot()
+	// 时间戳每次都变，不参与「是否有变化」的判定
+	stable := view
+	stable.UpdatedAt = time.Time{}
+	data, err := json.MarshalIndent(stable, "", "  ")
+	if err != nil {
+		return
+	}
+	sum := sha256.Sum256(data)
+	fp := hex.EncodeToString(sum[:8])
+	m.mu.Lock()
+	unchanged := fp == m.stateFP
+	m.stateFP = fp
+	m.mu.Unlock()
+	if unchanged {
+		return
+	}
+	full, err := json.MarshalIndent(view, "", "  ")
+	if err != nil {
+		return
+	}
+	writeFileAtomic(m.statePath, full)
+}
+
+// writeFileAtomic 先写临时文件再 rename，读者不会看到半截 JSON。
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Subscribe 订阅实时事件（SSE 用）。
