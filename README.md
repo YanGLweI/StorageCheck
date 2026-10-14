@@ -124,8 +124,8 @@ build/config.default.json     RPM 里落地的默认配置
 
 ## 版本与发版
 
-当前发布 **v1.1.1**（<https://github.com/YanGLweI/StorageCheck/releases/tag/v1.1.1>）：
-Linux 版首发 + 终端界面两处输入修复。Release 挂 2 个 Windows Setup 安装包与 4 个 RPM，
+当前发布 **v1.1.2**（<https://github.com/YanGLweI/StorageCheck/releases/tag/v1.1.2>）：
+修正阿里企业邮 SMTP 预设地址。Release 挂 2 个 Windows Setup 安装包与 4 个 RPM，
 说明里带实测 SHA-256 与真机验证步骤；RPM 与安装包均未做 GPG / 代码签名，请以上面的哈希核对。
 
 - Windows 版：已完成（v1.0.x 起，托盘 + Web 控制台 + NSIS 安装包）

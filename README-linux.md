@@ -6,7 +6,7 @@
 ## 安装
 
 ```bash
-sudo dnf install ./storagecheck-1.1.1-1.el10.x86_64.rpm
+sudo dnf install ./storagecheck-1.1.2-1.el10.x86_64.rpm
 systemctl status storagecheck        # 安装结束即已 active
 ```
 
@@ -138,10 +138,10 @@ RHEL 上服务以常规 systemd 域运行，采集只读挂载点、发信走网
 
 ```bash
 brew install rpm                       # 一次性
-./build-linux.sh 1.1.1                 # 二进制 + el9/el10 × x86_64/aarch64
-./build-linux.sh 1.1.1 --bins-only     # 只要二进制
-./build-linux.sh 1.1.1 --in-container  # 改用 ubi10 容器里的 rpmbuild
-./build.sh 1.1.1 all                    # Windows + Linux 一起出
+./build-linux.sh 1.1.2                 # 二进制 + el9/el10 × x86_64/aarch64
+./build-linux.sh 1.1.2 --bins-only     # 只要二进制
+./build-linux.sh 1.1.2 --in-container  # 改用 ubi10 容器里的 rpmbuild
+./build.sh 1.1.2 all                    # Windows + Linux 一起出
 ```
 
 构建在 macOS 上完成（`CGO_ENABLED=0` 交叉编译），`build-linux.sh` 会先跑
