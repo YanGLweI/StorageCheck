@@ -1,9 +1,12 @@
+//go:build linux
+
 package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 
@@ -17,17 +20,12 @@ import (
 	"storagecheck/internal/state"
 )
 
-// opts 由持久 flag 填充，各子命令共享。
-var opts runOptions
-
-func main() {
-	os.Exit(execute())
-}
-
 func execute() int {
 	root := newRootCommand()
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "执行失败:", err)
+		log.Println("启动失败:", err)
+		reportStartupFailure(err)
 		return 1
 	}
 	return 0

@@ -22,9 +22,10 @@ import (
 
 // setupLogging：服务日志交给 journald（unit 里 StandardOutput=journal），
 // 不再往配置目录写 storagecheck.log —— 那会让日志无界增长且没法用 journalctl 看。
-func setupLogging(string) {
+func setupLogging(string) error {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	log.SetPrefix("storagecheck: ")
+	return nil
 }
 
 func newSecretBox(dir string) config.SecretBox {

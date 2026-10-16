@@ -2,19 +2,7 @@
 
 package main
 
-import (
-	"fmt"
-
-	"github.com/spf13/cobra"
-)
-
-// registerPlatformCommands：桌面版没有额外的平台专属命令。
-func registerPlatformCommands(*cobra.Command) {}
-
-// defaultAction 保持 Windows 双击图标即启动监控的原有行为。
-func defaultAction(cmd *cobra.Command, o runOptions) error {
-	return runApp(o)
-}
+import "fmt"
 
 // notifyCheck 桌面版的状态入口是内嵌控制台，信号控制面只有 Linux 服务用到。
 func notifyCheck(string) error {

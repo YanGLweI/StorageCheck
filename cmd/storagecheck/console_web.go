@@ -21,6 +21,7 @@ func newConsole(a consoleArgs) (console, error) {
 	}
 	srv.SetAutostartFunc(a.autostartSet)
 	srv.SetAutostartStateFunc(a.autostartGet)
+	srv.SetOpenConsoleFunc(a.openConsole)
 	return &webConsole{srv: srv}, nil
 }
 

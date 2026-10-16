@@ -21,12 +21,17 @@ import (
 )
 
 // setupLogging 开发态沿用写文件的日志，方便在 IDE 控制台之外回溯。
-func setupLogging(dir string) {
+// 目录先建出来，理由同 Windows 侧：日志排在 NewStore 之前。
+func setupLogging(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(filepath.Join(dir, "storagecheck.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
 	log.SetOutput(f)
+	return nil
 }
 
 func newSecretBox(dir string) config.SecretBox { return config.NewAESBox(dir) }

@@ -26,12 +26,18 @@ func newSecretBox(dir string) config.SecretBox { return secret.NewDPAPIBox() }
 func newAutostartManager(dir string) autostart.Manager { return autostart.New() }
 
 // setupLogging：桌面版把日志写进配置目录（没有事件日志查看器）。
-func setupLogging(dir string) {
+// 目录得先建出来：配置目录是 NewStore 才建的，而它排在日志之后，
+// --config-dir 指向新目录时不建就会让日志永远落不了盘。
+func setupLogging(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(filepath.Join(dir, "storagecheck.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
 	log.SetOutput(f)
+	return nil
 }
 
 func credentialPath() string { return "" }

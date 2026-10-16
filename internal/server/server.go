@@ -35,6 +35,7 @@ type Server struct {
 
 	onAutostart    func(enable bool) error
 	autostartState func() bool
+	openConsole    func()
 }
 
 // SetAutostartFunc 注册开机自启应用回调（保存配置时调用）。
@@ -42,6 +43,11 @@ func (s *Server) SetAutostartFunc(fn func(enable bool) error) { s.onAutostart = 
 
 // SetAutostartStateFunc 注册开机自启状态查询回调（读取系统启动项，而非配置缓存）。
 func (s *Server) SetAutostartStateFunc(fn func() bool) { s.autostartState = fn }
+
+// SetOpenConsoleFunc 注册「显示控制台」回调：第二个实例（双击快捷方式）不再自己开窗，
+// 而是请求常驻进程开 —— 临时进程既没有前台权限，也会在返回后立刻退出，
+// 由它拉起的浏览器窗口等于没了主人。
+func (s *Server) SetOpenConsoleFunc(fn func()) { s.openConsole = fn }
 
 // Opened 返回一次性访问地址（带 token），浏览器访问后转为 Cookie。
 func New(mon *monitor.Monitor, store *config.Store, version string) (*Server, error) {
@@ -64,6 +70,7 @@ func New(mon *monitor.Monitor, store *config.Store, version string) (*Server, er
 	mux.HandleFunc("/api/check", s.auth(s.handleCheck))
 	mux.HandleFunc("/api/pause", s.auth(s.handlePause))
 	mux.HandleFunc("/api/smtp/test", s.auth(s.handleSMTPTest))
+	mux.HandleFunc("/api/console/open", s.auth(s.handleOpenConsole))
 	mux.HandleFunc("/api/stream", s.handleStream) // SSE 用 query token 鉴权
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -146,6 +153,21 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	snap := s.mon.Snapshot()
 	snap.SMTPReady = s.mon.Config().SMTP.Host != "" && s.mon.Config().SMTP.User != "" && len(s.mon.Config().SMTP.Recipients) > 0
 	writeJSON(w, snap)
+}
+
+// handleOpenConsole 唤起/新建控制台窗口。窗口搜索会枚举所有顶层窗口、
+// 新建窗口还要拉起浏览器，都不该让一个 HTTP 请求陪着等，所以丢给新 goroutine。
+func (s *Server) handleOpenConsole(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"需要 POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if s.openConsole == nil {
+		http.Error(w, `{"error":"本平台没有控制台"}`, http.StatusNotFound)
+		return
+	}
+	go s.openConsole()
+	writeJSON(w, map[string]string{"status": "已请求显示控制台"})
 }
 
 // PUT /api/config 载荷

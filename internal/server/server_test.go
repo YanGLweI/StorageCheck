@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"storagecheck/internal/collector"
 	"storagecheck/internal/config"
@@ -116,5 +117,59 @@ func TestAutostartUsesLiveState(t *testing.T) {
 	}
 	if get() {
 		t.Fatal("删除后 GET 应报未启用")
+	}
+}
+
+// 双击快捷方式的第二实例靠这个接口请常驻进程开窗：必须鉴权、只认 POST，
+// 并且真的把回调交给 openConsole —— 回调不执行就等于症状没修。
+func TestOpenConsoleEndpoint(t *testing.T) {
+	srv, base := newTestServer(t)
+
+	noToken, err := http.Post(base+"/api/console/open", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noToken.Body.Close()
+	if noToken.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("无 token 应 401，实际 %s", noToken.Status)
+	}
+
+	called := make(chan struct{}, 1)
+	srv.SetOpenConsoleFunc(func() { called <- struct{}{} })
+
+	get, err := http.NewRequest(http.MethodGet, base+"/api/console/open?token="+srv.Token(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getResp, err := http.DefaultClient.Do(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getResp.Body.Close()
+	if getResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET 应 405，实际 %s", getResp.Status)
+	}
+	select {
+	case <-called:
+		t.Fatal("GET 不该触发开窗回调")
+	default:
+	}
+
+	post, err := http.NewRequest(http.MethodPost, base+"/api/console/open?token="+srv.Token(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postResp, err := http.DefaultClient.Do(post)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postResp.Body.Close()
+	if postResp.StatusCode != http.StatusOK {
+		t.Fatalf("带 token 的 POST 应 200，实际 %s", postResp.Status)
+	}
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("openConsole 回调没有被调用")
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -52,6 +54,8 @@ type consoleArgs struct {
 	version      string
 	autostartSet func(enable bool) error
 	autostartGet func() bool
+	// openConsole 由本地接口触发：让常驻进程自己唤起/新建控制台窗口。
+	openConsole func()
 }
 
 // liveSender 每次发信时按当前配置构建 mailer（改配置即时生效）。
@@ -119,7 +123,11 @@ func runApp(o runOptions) error {
 	if err != nil {
 		return fmt.Errorf("确定配置目录失败: %w", err)
 	}
-	setupLogging(dir)
+	// 日志接不上文件就等于程序瞎跑（windowsgui 下 stderr 没有落点），所以当场报一次，
+	// 不能等到退出才报 —— 常驻实例可能几天都不退出。
+	if err := setupLogging(dir); err != nil {
+		reportStartupFailure(fmt.Errorf("日志写不进 %s，本次运行的日志都会丢失: %w", dir, err))
+	}
 
 	box := newSecretBox(dir)
 	store, err := config.NewStore(dir, box)
@@ -176,7 +184,8 @@ func runApp(o runOptions) error {
 		return err
 	}
 
-	c, err := newConsole(consoleArgs{
+	var c console
+	c, err = newConsole(consoleArgs{
 		mon:     mon,
 		store:   store,
 		version: version,
@@ -191,6 +200,8 @@ func runApp(o runOptions) error {
 			cmd, err := am.Command()
 			return err == nil && strings.TrimSpace(cmd) != ""
 		},
+		// 闭包引用 c 本身：调用发生在 newConsole 返回之后
+		openConsole: func() { presentOrOpenConsole(c.URL(), c.Port()) },
 	})
 	if err != nil {
 		return err
@@ -261,7 +272,39 @@ func alreadyRunning(store *config.Store, o runOptions) error {
 		log.Println("已有实例在运行，--minimized 启动故不唤起窗口")
 		return nil
 	}
-	presentOrOpenConsole(ri.URL, ri.Port)
+	// 优先请常驻进程自己开窗；它长期存活、且窗口权限都归它。
+	// 请不动（服务没起、版本不匹配、端口被回收）才退回本进程自己开。
+	if err := requestConsoleOpen(ri); err != nil {
+		log.Printf("请常驻进程显示控制台失败，改由本进程打开: %v", err)
+		presentOrOpenConsole(ri.URL, ri.Port)
+	}
+	return nil
+}
+
+// requestConsoleOpen 让正在运行的实例显示自己的控制台。
+// 临时进程做这件事有两道坎：SetForegroundWindow 因没有前台权限被系统拒绝，
+// 而它一退出，由它拉起的浏览器窗口就没了主人 —— 双击「没反应」就是这么来的。
+func requestConsoleOpen(ri runInfo) error {
+	u, err := url.Parse(ri.URL)
+	if err != nil {
+		return err
+	}
+	u.Path = "/api/console/open"
+	u.RawQuery = url.Values{"token": {ri.Token}}.Encode()
+	req, err := http.NewRequest(http.MethodPost, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("常驻进程返回 %s", resp.Status)
+	}
+	log.Printf("已请常驻进程显示控制台窗口: port=%d", ri.Port)
 	return nil
 }
 
@@ -314,10 +357,4 @@ func writeRunFile(dir string, ri runInfo) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, "run.json"))
-}
-
-func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "StorageCheck 启动失败:", err)
-	log.Println("启动失败:", err)
-	os.Exit(1)
 }
