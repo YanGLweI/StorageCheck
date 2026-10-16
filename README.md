@@ -57,10 +57,10 @@ Linux 独有：
 
 ```bash
 brew install nsis rpm      # 一次性
-./build.sh 1.1.2           # 只出 Windows 绿色 exe + 安装包
-./build.sh 1.1.2 linux     # Windows + Linux 静态二进制（不打 RPM，快速验证能编过）
-./build.sh 1.1.2 all       # Windows + Linux 二进制 + el9/el10 × x86_64/aarch64 的 RPM（发版用）
-./build-linux.sh 1.1.2     # 只出 Linux，详见 README-linux.md 的「构建」
+./build.sh 1.1.8           # 只出 Windows 绿色 exe + 安装包
+./build.sh 1.1.8 linux     # Windows + Linux 静态二进制（不打 RPM，快速验证能编过）
+./build.sh 1.1.8 all       # Windows + Linux 二进制 + el9/el10 × x86_64/aarch64 的 RPM（发版用）
+./build-linux.sh 1.1.8     # 只出 Linux，详见 README-linux.md 的「构建」
 ```
 
 `build.sh` 依次完成：
@@ -117,16 +117,18 @@ build/config.default.json     RPM 里落地的默认配置
 ## 数据位置
 
 - **Windows**：`%APPDATA%\StorageCheck`（macOS 开发模式在 `~/Library/Application Support/StorageCheck`）
-  — `config.json`、`events.log`、`storagecheck.log`、`run.json`
+  — `config.json`、`events.log`、`storagecheck.log`、`run.json`；
+  另有 `storagecheck-startup.log`，只在日志接不上文件或启动失败时写入，带上当时的环境与命令行
 - **Linux**：`/etc/storagecheck/`（`config.json` + `seal.key`）与 `/var/lib/storagecheck/`
   （`state.json`、`events.log`、`.lock`），程序日志进 journald（`journalctl -u storagecheck`）
 - 配置目录解析顺序：`--config-dir` > `$STORAGECHECK_CONFIG_DIR` > 系统安装目录 > 用户配置目录
 
 ## 版本与发版
 
-当前发布 **v1.1.2**（<https://github.com/YanGLweI/StorageCheck/releases/tag/v1.1.2>）：
-修正阿里企业邮 SMTP 预设地址。Release 挂 2 个 Windows Setup 安装包与 4 个 RPM，
-说明里带实测 SHA-256 与真机验证步骤；RPM 与安装包均未做 GPG / 代码签名，请以上面的哈希核对。
+当前发布 **v1.1.8**（<https://github.com/YanGLweI/StorageCheck/releases/tag/v1.1.8>）：
+修好 Windows 双击快捷方式没反应（v1.1.1 起，桌面入口不再经过 cobra），并把启动失败改成落盘可查。
+Release 挂 2 个 Windows Setup 安装包与 4 个 RPM，说明里带实测 SHA-256 与真机验证步骤；
+RPM 与安装包均未做 GPG / 代码签名，请以上面的哈希核对。
 
 - Windows 版：已完成（v1.0.x 起，托盘 + Web 控制台 + NSIS 安装包）
 - Linux（RHEL 9/10）无 GUI 版：已完成（v1.1.x 起，statfs 采集器 + systemd 服务 + 终端配置界面 + RPM）
