@@ -37,6 +37,10 @@ var securityOptions = []struct {
 	{"none", "不加密（内网中继，端口 25）", 25},
 }
 
+// defaultCAFile 是 RPM 机器上放内网 CA 的约定位置：选「指定 CA 文件」时先填上它，
+// 省得再去敲一整串路径。
+const defaultCAFile = "/etc/storagecheck/smtp_ca.pem"
+
 type smtpPage struct {
 	a *app
 	f form
@@ -54,7 +58,11 @@ func (p *smtpPage) save() (bool, error) {
 	if err := p.f.save(false); err != nil {
 		return true, err
 	}
-	return true, p.a.b.commit()
+	if err := p.a.b.commit(); err != nil {
+		return true, err
+	}
+	p.f.clearSecrets()
+	return true, nil
 }
 
 func (p *smtpPage) enter() tea.Cmd {
@@ -62,7 +70,6 @@ func (p *smtpPage) enter() tea.Cmd {
 	p.f.fields = []formField{
 		{
 			label:   "服务商预设",
-			help:    "选择后自动填入服务器与端口，仍可手工改",
 			kind:    kindChoice,
 			options: presetNames(),
 			index:   func() int { return presetIndex(p.a.b.cfg.SMTP.Preset) },
@@ -76,7 +83,7 @@ func (p *smtpPage) enter() tea.Cmd {
 				if pr.port > 0 {
 					c.Port = pr.port
 				}
-				p.syncInputs()
+				p.syncInputs("SMTP 服务器", "端口")
 			},
 		},
 		{
@@ -113,7 +120,51 @@ func (p *smtpPage) enter() tea.Cmd {
 			setIndex: func(i int) {
 				p.a.b.cfg.SMTP.Security = securityOptions[i].key
 				p.a.b.cfg.SMTP.Port = securityOptions[i].port
-				p.syncInputs()
+				p.syncInputs("端口")
+			},
+		},
+		{
+			label:   "证书校验",
+			kind:    kindChoice,
+			options: []string{"系统信任库", "指定 CA 文件", "不校验（内网自签名）"},
+			index: func() int {
+				c := p.a.b.cfg.SMTP
+				switch {
+				case c.InsecureSkipVerify:
+					return 2
+				case c.CAFile != "":
+					return 1
+				default:
+					return 0
+				}
+			},
+			// 模式是从「不校验 + CA 路径」两个字段推出来的，没有第三份状态可以对不上：
+			// 填了路径就等于选了「指定 CA 文件」。
+			setIndex: func(i int) {
+				c := &p.a.b.cfg.SMTP
+				c.InsecureSkipVerify = i == 2
+				if i == 1 {
+					if c.CAFile == "" {
+						c.CAFile = defaultCAFile
+					}
+				} else {
+					c.CAFile = ""
+				}
+				p.syncInputs("CA 文件")
+			},
+		},
+		{
+			label: "CA 文件",
+			kind:  kindText,
+			text:  func() string { return p.a.b.cfg.SMTP.CAFile },
+			save: func(raw string) error {
+				if raw != "" {
+					if _, err := os.Stat(raw); err != nil {
+						return fmt.Errorf("不可读: %w", err)
+					}
+				}
+				p.a.b.cfg.SMTP.CAFile = raw
+				return nil
 			},
 		},
 		{
@@ -125,6 +176,19 @@ func (p *smtpPage) enter() tea.Cmd {
 				p.a.b.cfg.SMTP.User = raw
 				return nil
 			},
+		},
+		{
+			label:   "SMTP 认证",
+			help:    "内网免认证的中继选「免认证」，保存时会清空授权码",
+			kind:    kindChoice,
+			options: []string{"需要授权码", "免认证（不发 AUTH）"},
+			index: func() int {
+				if p.a.b.cfg.SMTP.NoAuth {
+					return 1
+				}
+				return 0
+			},
+			setIndex: func(i int) { p.a.b.cfg.SMTP.NoAuth = i == 1 },
 		},
 		{
 			label: "授权码",
@@ -168,12 +232,22 @@ func (p *smtpPage) enter() tea.Cmd {
 		// 状态行取输入框里的值：刚敲完还没保存时也要对上屏幕上看到的内容，
 		// 否则页脚说「收件人 0 个」而发信又用的是这些地址，自相矛盾。
 		sealed := c.PassEnc != "" || p.f.value("授权码") != ""
-		pass := dim.Render("未设置")
+		mode, pass := "需要授权码", dim.Render("未设置")
 		if sealed {
 			pass = good.Render("已设置")
 		}
-		return fmt.Sprintf("授权码：%s · 收件人：%d 个\n%s",
-			pass, len(splitList(p.f.value("收件人"))),
+		if c.NoAuth {
+			mode, pass = "免认证", dim.Render("不使用")
+		}
+		cert := "系统信任库"
+		switch {
+		case c.InsecureSkipVerify:
+			cert = warn.Render("不校验")
+		case c.CAFile != "":
+			cert = "指定 CA"
+		}
+		return fmt.Sprintf("SMTP 认证：%s · 证书：%s · 授权码：%s · 收件人：%d 个\n%s",
+			mode, cert, pass, len(splitList(p.f.value("收件人"))),
 			dim.Render("授权码以 AES-GCM 加密存于配置目录，输入时不回显，也不会出现在命令行参数里"))
 	}
 	p.f.onKey = func(msg tea.KeyMsg) (bool, tea.Cmd) {
@@ -185,20 +259,28 @@ func (p *smtpPage) enter() tea.Cmd {
 		}
 		return false, nil
 	}
-	cmd := p.f.init()
-	p.syncInputs()
-	return cmd
+	// f.init() 里的 build() 已按当前配置填好各文本行，不用再整体刷一遍
+	return p.f.init()
 }
 
-// syncInputs 让预设/加密方式切换后的新值马上显示，
-// 否则要退出重进才能看到填好的服务器地址。
-func (p *smtpPage) syncInputs() {
+// syncInputs 只刷标签点名的行：预设/加密方式/证书校验这些选项切换会改写某几个配置值，
+// 要让新值马上可见。不加选择地刷全部行，会把用户刚敲进去、还没 ctrl+s 的内容抹回磁盘上的旧值。
+func (p *smtpPage) syncInputs(labels ...string) {
 	for i := range p.f.fields {
 		fd := &p.f.fields[i]
 		if fd.kind == kindChoice || fd.text == nil {
 			continue
 		}
-		fd.input.SetValue(fd.text())
+		hit := false
+		for _, l := range labels {
+			if fd.label == l {
+				hit = true
+				break
+			}
+		}
+		if hit {
+			fd.input.SetValue(fd.text())
+		}
 	}
 }
 
@@ -218,9 +300,6 @@ func (p *smtpPage) testMail() tea.Cmd {
 		pass, err := p.a.b.store.OpenSecret(cfg.SMTP.PassEnc)
 		if err != nil {
 			return errMsg("读取授权码失败: " + err.Error())
-		}
-		if pass == "" {
-			return errMsg("请先设置授权码")
 		}
 		if err := mailer.New(cfg.SMTP, pass).SendTest(host); err != nil {
 			return errMsg("测试邮件发送失败: " + err.Error())

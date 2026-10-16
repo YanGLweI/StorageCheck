@@ -90,11 +90,23 @@
               <option value="none">无加密（仅内网）</option>
             </select>
           </label>
+          <label>证书校验
+            <select id="inCert">
+              <option value="system">系统信任库</option>
+              <option value="ca">指定 CA 文件（内网自建 CA）</option>
+              <option value="insecure">不校验（内网自签名）</option>
+            </select>
+          </label>
+          <label>CA 文件
+            <input id="inCAFile" type="text" placeholder="/etc/storagecheck/smtp_ca.pem">
+            <small id="certHint" class="muted"></small>
+          </label>
           <label>发件账号<input id="inUser" type="text" placeholder="alert@example.com"></label>
           <label>授权码 / 密码
             <input id="inPass" type="password" placeholder="留空表示不修改" autocomplete="new-password">
             <small id="passHint" class="muted"></small>
           </label>
+          <label class="check"><input id="inNoAuth" type="checkbox"><span>免认证（内网中继，不发 AUTH）</span></label>
           <label>发件人显示名<input id="inAlias" type="text"></label>
           <label>收件人（多个用英文逗号分隔）<input id="inRecipients" type="text" placeholder="you@example.com"></label>
         </div>

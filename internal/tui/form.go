@@ -144,6 +144,16 @@ func (f *form) value(label string) string {
 	return ""
 }
 
+// clearSecrets 在保存成功后抹掉口令输入框：密文已经落盘，
+// 屏幕上再留一串掩码既让人误以为还没存，也白把口令长度暴露给旁人。
+func (f *form) clearSecrets() {
+	for i := range f.fields {
+		if f.fields[i].kind == kindSecret {
+			f.fields[i].input.SetValue("")
+		}
+	}
+}
+
 func (f *form) markDirty() { f.dirty = true }
 
 func (f *form) update(msg tea.Msg) tea.Cmd {

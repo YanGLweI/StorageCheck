@@ -21,14 +21,22 @@ type DriveConfig struct {
 }
 
 type SMTPConfig struct {
-	Preset     string   `json:"preset"`
-	Host       string   `json:"host"`
-	Port       int      `json:"port"`
-	Security   string   `json:"security"` // tls | starttls | none
-	User       string   `json:"user"`
+	Preset   string `json:"preset"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Security string `json:"security"` // tls | starttls | none
+	User     string `json:"user"`
+	// NoAuth 为真时完全不发送 SMTP 认证，已保存的授权码与 systemd 凭据一并忽略，
+	// 对应内网免认证中继；保存这个状态会同时清空 pass_enc。
+	NoAuth     bool     `json:"no_auth,omitempty"`
 	PassEnc    string   `json:"pass_enc,omitempty"` // secret box 加密后的 hex
 	FromAlias  string   `json:"from_alias"`
 	Recipients []string `json:"recipients"`
+	// CAFile 指向一份 PEM（内网自建 CA 常用），非空时 TLS 只认它、不再用系统信任库。
+	CAFile string `json:"ca_file,omitempty"`
+	// InsecureSkipVerify 为真时不校验服务器证书：等于放弃 TLS 的中间人防护，
+	// 只给拿不到 CA 的可信内网自签名环境用。
+	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
 }
 
 // LinuxOptions 是 Linux 采集与运维相关的可选项，Windows/macOS 忽略。

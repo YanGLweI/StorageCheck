@@ -2,7 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -122,6 +126,135 @@ func TestAutostartUsesLiveState(t *testing.T) {
 
 // 双击快捷方式的第二实例靠这个接口请常驻进程开窗：必须鉴权、只认 POST，
 // 并且真的把回调交给 openConsole —— 回调不执行就等于症状没修。
+// 免认证勾选是界面上唯一能把授权码从磁盘上清掉的入口：
+// 授权码输入框的「留空」只表示不修改，不勾这一挡就删不掉口令。
+func TestNoAuthClearsStoredSecret(t *testing.T) {
+	srv, base := newTestServer(t)
+
+	type smtpView struct {
+		HasPass bool `json:"has_pass"`
+		NoAuth  bool `json:"no_auth"`
+	}
+	put := func(pass, noAuth string) {
+		t.Helper()
+		body := `{"smtp":{"preset":"custom","host":"relay.internal","port":25,"security":"none",` +
+			`"user":"alert@example.com","recipients":["ops@example.com"],"pass":` + pass + `,"no_auth":` + noAuth + `}}`
+		req, err := http.NewRequest(http.MethodPut, base+"/api/config?token="+srv.Token(), strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("保存失败: %s", res.Status)
+		}
+	}
+	current := func() smtpView {
+		t.Helper()
+		res, err := http.Get(base + "/api/config?token=" + srv.Token())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out struct{ SMTP smtpView }
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.SMTP
+	}
+
+	put(`"secret-code"`, "false")
+	if got := current(); !got.HasPass || got.NoAuth {
+		t.Fatalf("填了授权码应存下密文且仍为需要认证: %+v", got)
+	}
+
+	// 输入框留空（不修改）+ 勾上免认证：密文必须消失
+	put(`""`, "true")
+	if got := current(); got.HasPass {
+		t.Errorf("免认证保存后应清空已存授权码: %+v", got)
+	} else if !got.NoAuth {
+		t.Errorf("no_auth 应落盘: %+v", got)
+	}
+
+	// 反悔取消勾选时不该「复活」那份密文，只能重新填
+	put(`""`, "false")
+	if got := current(); got.HasPass || got.NoAuth {
+		t.Errorf("取消免认证后仍应没有授权码: %+v", got)
+	}
+}
+
+// CA 路径写错了要在保存时就拦住：存进去才发现读不到，故障会一路推到下一次告警邮件。
+func TestSMTPCertOptions(t *testing.T) {
+	srv, base := newTestServer(t)
+
+	const body = `{"preset":"custom","host":"mail.internal","port":465,"security":"tls",` +
+		`"user":"alert@example.com","recipients":["ops@example.com"]%s}`
+
+	put := func(extra string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, base+"/api/config?token="+srv.Token(),
+			strings.NewReader(`{"smtp":`+fmt.Sprintf(body, extra)+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		out, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(out)
+	}
+	get := func() map[string]any {
+		t.Helper()
+		res, err := http.Get(base + "/api/config?token=" + srv.Token())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out struct {
+			SMTP map[string]any `json:"smtp"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.SMTP
+	}
+
+	if code, msg := put(`,"ca_file":"/nope/smtp_ca.pem"`); code != http.StatusBadRequest ||
+		!strings.Contains(msg, "CA 文件") {
+		t.Errorf("CA 文件不存在应保存失败并说明原因，实际 %d %s", code, msg)
+	}
+	if v, ok := get()["ca_file"]; ok && v == "/nope/smtp_ca.pem" {
+		t.Error("被拒的配置不该落盘")
+	}
+
+	pem := filepath.Join(t.TempDir(), "smtp_ca.pem")
+	if err := os.WriteFile(pem, []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, msg := put(`,"ca_file":"` + pem + `"`); code != http.StatusOK {
+		t.Fatalf("存在的 CA 文件应能保存: %d %s", code, msg)
+	}
+	if get()["ca_file"] != pem {
+		t.Errorf("ca_file 应落盘，实际 %v", get()["ca_file"])
+	}
+
+	if code, msg := put(`,"insecure_skip_verify":true`); code != http.StatusOK {
+		t.Fatalf("不校验应能保存: %d %s", code, msg)
+	}
+	got := get()
+	if got["insecure_skip_verify"] != true {
+		t.Errorf("insecure_skip_verify 应落盘，实际 %v", got["insecure_skip_verify"])
+	}
+	if v, ok := got["ca_file"]; ok && v != "" {
+		t.Errorf("界面切到不校验时不该再留着 CA 路径，实际 %v", v)
+	}
+}
+
 func TestOpenConsoleEndpoint(t *testing.T) {
 	srv, base := newTestServer(t)
 

@@ -92,6 +92,7 @@ var keyNames = map[string]tea.KeyMsg{
 	"enter": {Type: tea.KeyEnter}, "esc": {Type: tea.KeyEscape}, "up": {Type: tea.KeyUp},
 	"down": {Type: tea.KeyDown}, "left": {Type: tea.KeyLeft}, "right": {Type: tea.KeyRight},
 	"backspace": {Type: tea.KeyBackspace},
+	"ctrl+u":    {Type: tea.KeyCtrlU},
 	// 真实终端里空格是带 Runes 的 KeySpace，输入框从 Runes 取字符
 	"space": {Type: tea.KeySpace, Runes: []rune{' '}},
 }
@@ -280,24 +281,177 @@ func TestTypingAddressesKeepsEveryCharacter(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("ctrl+t 应触发发送测试邮件")
 	}
-	// 没按过 ctrl+s：收件人得从输入框直接生效，卡点只能是授权码。
-	// 否则用户必须「先保存再测试」，填错了还得存一份坏配置进磁盘。
-	if msg, ok := cmd().(errMsg); !ok || !strings.Contains(string(msg), "授权码") {
-		t.Errorf("未填授权码时应给出可读错误，实际 %#v", cmd())
-	}
+	// 没按过 ctrl+s：收件人得从输入框直接落到内存，试发不必先保存。
 	if got := p.a.b.cfg.SMTP.Recipients; len(got) != 2 {
 		t.Errorf("试发应把屏幕上的收件人落到内存，实际 %v", got)
 	}
 	if !p.f.dirtyState() {
 		t.Error("试发不该抹掉未保存标记，ctrl+s 仍须落盘")
 	}
-	// 选项行上单键 t 仍然可用，不必记两套绑定
-	a.Update(key(t, "up"))
-	a.Update(key(t, "up"))
-	a.Update(key(t, "up"))
-	a.Update(key(t, "up"))
+	// 授权码可选：没填时不能再用「请先设置授权码」挡在本地，
+	// 而应真去连服务器。指向本机一个没人监听的端口，握手立刻失败且不会发出邮件。
+	p.a.b.cfg.SMTP.Host, p.a.b.cfg.SMTP.Port = "127.0.0.1", 1
+	msg, ok := cmd().(errMsg)
+	if !ok || !strings.Contains(string(msg), "测试邮件发送失败") {
+		t.Errorf("未填授权码时应当直接尝试发信并报连接错误，实际 %#v", cmd())
+	}
+	// 选项行上单键 t 仍然可用，不必记两套绑定（按类型找行，别数字段个数）
+	for i := 0; i < len(p.f.fields) && p.f.current().kind != kindChoice; i++ {
+		a.Update(key(t, "up"))
+	}
+	if p.f.current().kind != kindChoice {
+		t.Fatal("邮件设置页里没有选项行")
+	}
 	if _, cmd := a.Update(key(t, "t")); cmd == nil {
 		t.Error("选项行上的 t 应仍然触发发送测试邮件")
+	}
+}
+
+// 授权码输入框的「留空 = 不修改」让界面无法清空口令，
+// 免认证这一挡就是唯一的显式清除入口，而且必须真的落到磁盘上。
+func TestNoAuthSwitchClearsSavedSecret(t *testing.T) {
+	a := newTestApp(t)
+	a.gotoPage(pageSMTP)
+	p := a.pages[pageSMTP].(*smtpPage)
+
+	typeInto(t, a, p, "收件人", "ops@example.com")
+	typeInto(t, a, p, "授权码", "abcd1234")
+	press(t, a, key(t, "ctrl+s"))
+	if a.err != "" {
+		t.Fatalf("第一次 ctrl+s 报错: %s", a.err)
+	}
+	if p.a.b.cfg.SMTP.PassEnc == "" {
+		t.Fatal("填了授权码并按 ctrl+s，应已加密写入配置")
+	}
+	if got := fieldByLabel(p, "授权码").input.Value(); got != "" {
+		t.Errorf("保存后授权码输入框该清空，屏幕上还留着 %q", got)
+	}
+
+	fd := fieldByLabel(p, "SMTP 认证")
+	if fd == nil {
+		t.Fatal("邮件设置页里没有 SMTP 认证这一行")
+	}
+	for i := 0; i < len(p.f.fields) && p.f.current() != fd; i++ {
+		press(t, a, key(t, "up"))
+	}
+	if p.f.current() != fd {
+		t.Fatal("没能把光标移到 SMTP 认证行")
+	}
+	press(t, a, key(t, "right"))
+	if !p.a.b.cfg.SMTP.NoAuth {
+		t.Fatal("右移应切到免认证")
+	}
+	// 输入框已在保存时清空，磁盘上那份密文只能靠免认证这一挡删掉
+	press(t, a, key(t, "ctrl+s"))
+	if a.err != "" {
+		t.Fatalf("切到免认证后 ctrl+s 报错: %s", a.err)
+	}
+	if p.a.b.cfg.SMTP.PassEnc != "" {
+		t.Errorf("免认证保存后内存里的密文应清空，实际 %q", p.a.b.cfg.SMTP.PassEnc)
+	}
+
+	saved, err := p.a.b.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.SMTP.PassEnc != "" {
+		t.Errorf("磁盘上的密文应随之删除，实际 %q", saved.SMTP.PassEnc)
+	}
+	if !saved.SMTP.NoAuth {
+		t.Error("no_auth 应落盘")
+	}
+}
+
+// 证书校验三态全靠「不校验标志 + CA 路径」两个字段推出来，
+// 循环切换时不能同时出现、也不能切走了还留着上一种的路径。
+func TestCertVerifyChoiceCyclesCleanly(t *testing.T) {
+	a := newTestApp(t)
+	a.gotoPage(pageSMTP)
+	p := a.pages[pageSMTP].(*smtpPage)
+
+	fd := fieldByLabel(p, "证书校验")
+	if fd == nil {
+		t.Fatal("邮件设置页里没有证书校验这一行")
+	}
+	for i := 0; i < len(p.f.fields) && p.f.current() != fd; i++ {
+		press(t, a, key(t, "down"))
+	}
+	if p.f.current() != fd {
+		t.Fatal("没能把光标移到证书校验行")
+	}
+
+	c := func() config.SMTPConfig { return p.a.b.cfg.SMTP }
+	if got := c(); got.InsecureSkipVerify || got.CAFile != "" {
+		t.Fatalf("默认应是系统信任库，实际 %+v", got)
+	}
+
+	press(t, a, key(t, "right")) // → 指定 CA 文件
+	if got := c(); got.InsecureSkipVerify {
+		t.Error("指定 CA 文件时不该同时不校验")
+	} else if got.CAFile == "" {
+		t.Error("选到指定 CA 文件时应先填上约定路径，省得手敲一整串")
+	}
+	if !strings.Contains(p.f.view(110), "CA 文件") {
+		t.Error("CA 文件路径应显示在页面上")
+	}
+
+	// 路径写错要在 ctrl+s 就被拦下，别把故障留到告警邮件发不出去那天
+	press(t, a, key(t, "down")) // → CA 文件
+	press(t, a, key(t, "ctrl+u"))
+	typeInto(t, a, p, "CA 文件", "/nope/smtp_ca.pem")
+	press(t, a, key(t, "ctrl+s"))
+	if !strings.Contains(a.err, "CA 文件") {
+		t.Errorf("CA 路径不可读应保存失败并说明原因，实际 %q", a.err)
+	}
+	if got := c(); got.CAFile == "/nope/smtp_ca.pem" {
+		t.Error("被拒的路径不该落盘")
+	}
+
+	press(t, a, key(t, "up")) // 回到证书校验行
+	press(t, a, key(t, "right")) // → 不校验
+	if got := c(); !got.InsecureSkipVerify {
+		t.Fatal("右移应切到不校验")
+	} else if got.CAFile != "" {
+		t.Errorf("切到不校验后不该再留着 CA 路径，实际 %q", got.CAFile)
+	}
+	if !strings.Contains(p.f.view(110), "证书：不校验") {
+		t.Error("页脚应显式标出不校验")
+	}
+
+	press(t, a, key(t, "right")) // → 回到系统信任库
+	if got := c(); got.InsecureSkipVerify || got.CAFile != "" {
+		t.Errorf("绕一圈应回到默认，实际 %+v", got)
+	}
+}
+
+// 选项行切换只该刷它自己改写的那几行：用户刚敲完、还没 ctrl+s 的收件人
+// 不该被一次「按了个左右键」顺手抹回磁盘上的旧值。
+func TestTogglingChoicesKeepsUnsavedTyping(t *testing.T) {
+	a := newTestApp(t)
+	a.gotoPage(pageSMTP)
+	p := a.pages[pageSMTP].(*smtpPage)
+
+	typeInto(t, a, p, "收件人", "ops@example.com")
+	before := fieldByLabel(p, "收件人").input.Value()
+
+	for _, label := range []string{"加密方式", "服务商预设"} {
+		fd := fieldByLabel(p, label)
+		if fd == nil {
+			t.Fatalf("邮件设置页里没有 %s 行", label)
+		}
+		for i := 0; i < len(p.f.fields) && p.f.current() != fd; i++ {
+			press(t, a, key(t, "up"))
+		}
+		if p.f.current() != fd {
+			t.Fatalf("没能把光标移到 %s 行", label)
+		}
+		press(t, a, key(t, "right"))
+		if got := fieldByLabel(p, "收件人").input.Value(); got != before {
+			t.Errorf("切「%s」把没保存的收件人刷掉了：应为 %q，实际 %q", label, before, got)
+		}
+	}
+	if got := fieldByLabel(p, "端口").input.Value(); got == "" {
+		t.Error("预设切换后端口的新值应立刻显示，不必退出重进")
 	}
 }
 

@@ -67,6 +67,11 @@ func (b *backend) snapshot() (monitor.StateView, bool, error) {
 // commit 落盘并通知守护进程热重载：改配置不需要 restart，
 // 重启会打断冷却/迟滞状态机，导致同一故障重复告警。
 func (b *backend) commit() error {
+	// 免认证时不要把一份用不上的密文留在盘上：授权码输入框里「留空 = 不修改」，
+	// 这一挡就是界面上唯一的清除入口，取消勾选后需要重新填写。
+	if b.cfg.SMTP.NoAuth {
+		b.cfg.SMTP.PassEnc = ""
+	}
 	if err := b.store.Save(b.cfg); err != nil {
 		return err
 	}

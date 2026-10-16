@@ -3,11 +3,13 @@ package mailer
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"mime"
 	"net"
 	"net/smtp"
+	"os"
 	"strings"
 	"time"
 
@@ -20,7 +22,12 @@ type Mailer struct {
 	pass string
 }
 
+// New 构造发信器。免认证配置在这里就把口令丢掉，
+// 三条加密方式分支于是都只会走「没有口令 = 不认证」这一条路。
 func New(cfg config.SMTPConfig, password string) *Mailer {
+	if cfg.NoAuth {
+		password = ""
+	}
 	return &Mailer{cfg: cfg, pass: password}
 }
 
@@ -40,14 +47,19 @@ func (m *Mailer) Send(subject, bodyHTML string) error {
 	body := buildMIME(c.User, c.FromAlias, subject, m.cfg.Recipients, bodyHTML)
 	addr := net.JoinHostPort(c.Host, fmt.Sprintf("%d", c.Port))
 	auth := smtp.PlainAuth("", c.User, m.pass, c.Host)
+	// 证书配置读不出来就别去拨号：先报错比连上再握手失败更接近原因。
+	tlsCfg, err := m.tlsConfig()
+	if err != nil {
+		return err
+	}
 
 	switch c.Security {
 	case "tls":
-		return m.sendImplicitTLS(addr, auth, c.User, c.Recipients, body)
+		return m.sendImplicitTLS(addr, tlsCfg, auth, c.User, c.Recipients, body)
 	case "starttls":
-		return m.sendSTARTTLS(addr, auth, c.User, c.Recipients, body)
+		return m.sendSTARTTLS(addr, tlsCfg, auth, c.User, c.Recipients, body)
 	default: // none —— 仅内网免认证 SMTP 场景
-		cl, err := m.client(addr, false)
+		cl, err := m.client(addr, tlsCfg, false)
 		if err != nil {
 			return err
 		}
@@ -61,6 +73,28 @@ func (m *Mailer) Send(subject, bodyHTML string) error {
 	}
 }
 
+// tlsConfig 决定信任锚点：默认用操作系统信任库；内网自建 CA 可以只认那一份证书；
+// 不校验是显式放弃中间人防护，只给拿不到 CA 的可信内网用。
+func (m *Mailer) tlsConfig() (*tls.Config, error) {
+	cfg := &tls.Config{ServerName: m.cfg.Host}
+	if m.cfg.InsecureSkipVerify {
+		cfg.InsecureSkipVerify = true
+		return cfg, nil
+	}
+	if path := m.cfg.CAFile; path != "" {
+		pem, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("smtp: 读取 CA 文件失败: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("smtp: CA 文件里没有可解析的证书: %s", path)
+		}
+		cfg.RootCAs = pool
+	}
+	return cfg, nil
+}
+
 // 无超时的 dial 会在 SMTP 不可达时永久挂住调用方（监控循环、终端界面），
 // 因此连接与整个会话都受 deadline 约束。
 const (
@@ -70,7 +104,7 @@ const (
 
 // client 建立带超时的连接；implicit 为真时先完成隐式 TLS 握手，
 // 为假时返回明文连接，由调用方按需 StartTLS。
-func (m *Mailer) client(addr string, implicit bool) (*smtp.Client, error) {
+func (m *Mailer) client(addr string, tlsCfg *tls.Config, implicit bool) (*smtp.Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
 	var dialer net.Dialer
@@ -84,7 +118,7 @@ func (m *Mailer) client(addr string, implicit bool) (*smtp.Client, error) {
 			raw.Close()
 			return nil, err
 		}
-		tlsConn := tls.Client(raw, &tls.Config{ServerName: m.cfg.Host})
+		tlsConn := tls.Client(raw, tlsCfg)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			raw.Close()
 			return nil, err
@@ -100,20 +134,24 @@ func (m *Mailer) client(addr string, implicit bool) (*smtp.Client, error) {
 	return cl, nil
 }
 
-func (m *Mailer) sendImplicitTLS(addr string, auth smtp.Auth, from string, to []string, body []byte) error {
-	cl, err := m.client(addr, true)
+func (m *Mailer) sendImplicitTLS(addr string, tlsCfg *tls.Config, auth smtp.Auth, from string, to []string, body []byte) error {
+	cl, err := m.client(addr, tlsCfg, true)
 	if err != nil {
 		return err
 	}
 	defer cl.Quit()
-	if err := cl.Auth(auth); err != nil {
-		return err
+	// 免密的内网 SMTP 中继也会用 465/TLS，此时广告里根本没有 AUTH，
+	// 无条件认证只会让这种配置永远发不出去。
+	if len(m.pass) > 0 {
+		if err := cl.Auth(auth); err != nil {
+			return err
+		}
 	}
 	return m.transmit(cl, from, to, body)
 }
 
-func (m *Mailer) sendSTARTTLS(addr string, auth smtp.Auth, from string, to []string, body []byte) error {
-	cl, err := m.client(addr, false)
+func (m *Mailer) sendSTARTTLS(addr string, tlsCfg *tls.Config, auth smtp.Auth, from string, to []string, body []byte) error {
+	cl, err := m.client(addr, tlsCfg, false)
 	if err != nil {
 		return err
 	}
@@ -121,7 +159,7 @@ func (m *Mailer) sendSTARTTLS(addr string, auth smtp.Auth, from string, to []str
 	if ok, _ := cl.Extension("STARTTLS"); !ok {
 		return fmt.Errorf("smtp: 服务器不支持 STARTTLS")
 	}
-	if err := cl.StartTLS(&tls.Config{ServerName: m.cfg.Host}); err != nil {
+	if err := cl.StartTLS(tlsCfg); err != nil {
 		return err
 	}
 	if len(m.pass) > 0 {

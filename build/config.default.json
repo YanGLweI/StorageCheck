@@ -11,6 +11,9 @@
     "port": 465,
     "security": "tls",
     "user": "",
+    "no_auth": false,
+    "ca_file": "",
+    "insecure_skip_verify": false,
     "from_alias": "StorageCheck 磁盘监控",
     "recipients": []
   },

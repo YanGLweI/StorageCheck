@@ -200,9 +200,39 @@ function fillSettings() {
   $("#inUser").value = s.user || "";
   $("#inAlias").value = s.from_alias || "";
   $("#inRecipients").value = (s.recipients || []).join(", ");
-  $("#passHint").textContent = s.has_pass ? "已保存授权码（留空则不修改）" : "尚未配置";
+  $("#inNoAuth").checked = !!s.no_auth;
+  $("#inCert").value = s.insecure_skip_verify ? "insecure" : (s.ca_file ? "ca" : "system");
+  $("#inCAFile").value = s.ca_file || "";
+  syncCertMode();
+  updatePassHint();
   $("#inAutostart").checked = !!cfg.autostart;
   $("#inMinimized").checked = !!cfg.launch_minimized;
+}
+
+// 三态是从两个字段推出来的：不校验优先，其次看有没有 CA 路径。
+function syncCertMode() {
+  const mode = $("#inCert").value;
+  $("#inCAFile").disabled = mode !== "ca";
+  $("#certHint").textContent = mode === "insecure"
+    ? "不校验证书等于放弃 TLS 的中间人防护，仅限可信内网"
+    : (mode === "ca" ? "只认这份 PEM，不再用系统信任库" : "");
+}
+
+// 选了「指定 CA 文件」却留空时，用占位符里那个约定路径兜底。
+function certCAFile() {
+  if ($("#inCert").value !== "ca") return "";
+  return $("#inCAFile").value.trim() || $("#inCAFile").placeholder;
+}
+
+// 免认证这一挡是界面上唯一的「清除授权码」入口：勾上再保存就不留密文了。
+function updatePassHint() {
+  if ($("#inNoAuth").checked) {
+    $("#passHint").textContent = "免认证：不发送 SMTP 认证，保存时清空已存授权码";
+    return;
+  }
+  $("#passHint").textContent = cfg.smtp && cfg.smtp.has_pass
+    ? "已保存授权码（留空则不修改）"
+    : "尚未配置授权码";
 }
 
 function buildPayload() {
@@ -219,6 +249,9 @@ function buildPayload() {
       security: $("#inSecurity").value,
       user: $("#inUser").value.trim(),
       pass: $("#inPass").value,
+      no_auth: $("#inNoAuth").checked,
+      ca_file: certCAFile(),
+      insecure_skip_verify: $("#inCert").value === "insecure",
       from_alias: $("#inAlias").value.trim(),
       recipients,
     },
@@ -310,6 +343,8 @@ $("#inPreset").addEventListener("change", () => {
 
 $("#saveBtn").addEventListener("click", saveSettings);
 $("#smtpTestBtn").addEventListener("click", testSMTP);
+$("#inNoAuth").addEventListener("change", updatePassHint);
+$("#inCert").addEventListener("change", syncCertMode);
 $("#refreshEventsBtn").addEventListener("click", loadEvents);
 
 (async function init() {

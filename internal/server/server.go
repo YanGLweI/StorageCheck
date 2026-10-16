@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -188,9 +189,14 @@ type putSMTP struct {
 	Port       int      `json:"port"`
 	Security   string   `json:"security"`
 	User       string   `json:"user"`
-	Pass       string   `json:"pass"` // 明文；空串表示不修改
+	Pass       string   `json:"pass"`    // 明文；空串表示不修改
+	NoAuth     bool     `json:"no_auth"` // 免认证：忽略并删除已存授权码
 	FromAlias  string   `json:"from_alias"`
 	Recipients []string `json:"recipients"`
+	// CAFile 与 InsecureSkipVerify 是证书校验的三态：空 + false 用系统信任库，
+	// 有 CAFile 只认那份，InsecureSkipVerify 为真则完全不校验。
+	CAFile             string `json:"ca_file"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify"`
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -250,12 +256,20 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			c := cfg.SMTP
 			c.Preset, c.Host, c.Port, c.Security = p.SMTP.Preset, p.SMTP.Host, p.SMTP.Port, p.SMTP.Security
 			c.User, c.FromAlias, c.Recipients = p.SMTP.User, p.SMTP.FromAlias, p.SMTP.Recipients
+			c.NoAuth = p.SMTP.NoAuth
+			c.CAFile = strings.TrimSpace(p.SMTP.CAFile)
+			c.InsecureSkipVerify = p.SMTP.InsecureSkipVerify
 			if p.SMTP.Pass != "" {
 				enc, err := s.store.SealSecret(p.SMTP.Pass)
 				if err != nil {
 					return err
 				}
 				c.PassEnc = enc
+			}
+			// 勾了免认证就不要再留一份用不上的密文，
+			// 否则取消勾选时会「复活」一个用户以为早就删掉的口令。
+			if c.NoAuth {
+				c.PassEnc = ""
 			}
 			switch c.Security {
 			case "tls", "starttls", "none":
@@ -264,6 +278,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			}
 			if c.Port <= 0 || c.Port > 65535 {
 				return errStr("非法的端口")
+			}
+			// 存一个读不到的 CA 路径，等于把故障推到下一次发信才暴露
+			if c.CAFile != "" && !c.InsecureSkipVerify {
+				if _, err := os.Stat(c.CAFile); err != nil {
+					return errStr("CA 文件读不到: " + err.Error())
+				}
 			}
 			for _, rc := range c.Recipients {
 				if !strings.Contains(rc, "@") {
