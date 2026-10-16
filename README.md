@@ -32,7 +32,9 @@ Linux 版的界面按键、信号控制、只读命令与常见问题集中在
 - 自动发现本机磁盘/挂载点，每盘独立「剩余百分比」阈值（默认 10%）
 - 告警状态机：触发即发邮件；冷却期内不重复骚扰；超冷却发升级提醒；恢复需越过「阈值+迟滞」，可选发送恢复邮件
 - 邮件失败自动进入重试窗口，事件写入历史与 `events.log`
-- SMTP 预设：QQ / 163 / 腾讯企业邮 / 阿里企业邮 / Gmail / Outlook，亦可自定义（SSL 465、STARTTLS 587、内网免密）
+- SMTP 预设：QQ / 163 / 腾讯企业邮 / 阿里企业邮 / Gmail / Outlook，亦可自定义（SSL 465、STARTTLS 587）
+- 内网免认证的中继可关掉 SMTP 认证（免认证），发信不发 AUTH，保存时一并删掉已存的授权码
+- TLS 证书校验三态：系统信任库 / 指定一份内网 CA（PEM）/ 不校验（内网自签名，显式放弃中间人防护）
 - 新盘处理方式可选「自动纳入监控」或「只记事件、等人工勾选」
 
 Windows 独有：
@@ -57,10 +59,10 @@ Linux 独有：
 
 ```bash
 brew install nsis rpm      # 一次性
-./build.sh 1.1.8           # 只出 Windows 绿色 exe + 安装包
-./build.sh 1.1.8 linux     # Windows + Linux 静态二进制（不打 RPM，快速验证能编过）
-./build.sh 1.1.8 all       # Windows + Linux 二进制 + el9/el10 × x86_64/aarch64 的 RPM（发版用）
-./build-linux.sh 1.1.8     # 只出 Linux，详见 README-linux.md 的「构建」
+./build.sh 1.1.9           # 只出 Windows 绿色 exe + 安装包
+./build.sh 1.1.9 linux     # Windows + Linux 静态二进制（不打 RPM，快速验证能编过）
+./build.sh 1.1.9 all       # Windows + Linux 二进制 + el9/el10 × x86_64/aarch64 的 RPM（发版用）
+./build-linux.sh 1.1.9     # 只出 Linux，详见 README-linux.md 的「构建」
 ```
 
 `build.sh` 依次完成：
@@ -125,9 +127,9 @@ build/config.default.json     RPM 里落地的默认配置
 
 ## 版本与发版
 
-当前发布 **v1.1.8**（<https://github.com/YanGLweI/StorageCheck/releases/tag/v1.1.8>）：
-修好 Windows 双击快捷方式没反应（v1.1.1 起，桌面入口不再经过 cobra），并把启动失败改成落盘可查。
-Release 挂 2 个 Windows Setup 安装包与 4 个 RPM，说明里带实测 SHA-256 与真机验证步骤；
+当前发布 **v1.1.9**（<https://github.com/YanGLweI/StorageCheck/releases/tag/v1.1.9>）：
+SMTP 授权码改为非必填——新增「免认证」开关，内网免认证中继可关掉 SMTP 认证，开关同时是界面上唯一
+的清除授权码入口。Release 挂 2 个 Windows Setup 安装包与 4 个 RPM，说明里带实测 SHA-256 与真机验证步骤；
 RPM 与安装包均未做 GPG / 代码签名，请以上面的哈希核对。
 
 - Windows 版：已完成（v1.0.x 起，托盘 + Web 控制台 + NSIS 安装包）

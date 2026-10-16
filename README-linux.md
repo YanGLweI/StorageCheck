@@ -38,12 +38,34 @@ sudo storagecheck
 | 监控总览 | 各挂载点容量、剩余、阈值与告警状态；`c` 立即检查、`p` 暂停/继续 |
 | 磁盘配置 | 勾选要监控的挂载点、设阈值；`a` 重新扫描、`n` 是否包含网络盘 |
 | 告警设置 | 检查间隔、告警冷却、恢复迟滞、恢复通知、新盘处理方式 |
-| 邮件设置 | 服务商预设、服务器/端口/加密、账号、授权码、收件人；`ctrl+t` 发测试邮件 |
+| 邮件设置 | 服务商预设、服务器/端口/加密、证书校验、SMTP 认证（需要授权码 / 免认证）、账号、授权码、收件人；`ctrl+t` 发测试邮件 |
 | 事件日志 | 最近的告警、恢复与错误 |
 | 服务状态 | systemd 激活与开机自启状态、最近日志、重载配置 |
 
 授权码输入为掩码，落盘前用 AES-256-GCM 加密（密钥 `seal.key`，0600 属 root），
 不会出现在命令行参数或 `ps` 里。
+
+授权码不是必填：内网免认证的中继把「SMTP 认证」切到「免认证」，发信就不发送 AUTH，
+保存时一并删掉配置里已存的授权码（授权码输入框里「留空」只表示不修改，删不掉口令）。
+切回「需要授权码」后需要重新填写。
+
+内网邮件服务器多用自签名证书，RHEL 的系统信任库里没有那张内部 CA，握手会报
+`x509: certificate signed by unknown authority`。「证书校验」三态可选：
+
+| 选项 | 适用 | 落盘字段 |
+| --- | --- | --- |
+| 系统信任库（默认） | 证书由公网 CA 签发，或已把内部 CA 装进 `/etc/pki/ca-trust/source/anchors/` 并 `update-ca-trust extract` | 两者皆空 |
+| 指定 CA 文件 | 只想让本程序认这份 CA，不动系统信任库 | `ca_file` |
+| 不校验（内网自签名） | 拿不到 CA；**等于放弃 TLS 的中间人防护**，仅限可信内网 | `insecure_skip_verify: true` |
+
+```bash
+# 指定 CA 的用法：约定路径，属 root、0600 即可
+sudo cp internal-ca.pem /etc/storagecheck/smtp_ca.pem && sudo chmod 600 /etc/storagecheck/smtp_ca.pem
+```
+
+注意证书是按**服务器地址**校验的：地址填 IP，证书 SAN 里就得有这个 IP；内网证书通常只有域名，
+那样请填域名（必要时用 `/etc/hosts` 指过去），否则会换成 `certificate is valid for ...` 的报错。
+只有「不校验」能绕过这种不匹配。
 
 `ctrl+t` 发测试邮件用的是**屏幕上当前填的值**，不必先 `ctrl+s`：填完收件人就能直接试发，
 试发也只写内存、不落盘，「有未保存改动」的提示会保留到你真正按 `ctrl+s`。
@@ -56,7 +78,8 @@ sudo storagecheck
 #   LoadCredential=smtp_password:/etc/storagecheck/smtp_password
 ```
 
-服务读取顺序为：systemd 凭据 > `STORAGECHECK_SMTP_PASSWORD` > 配置里的密文。
+服务读取顺序为：systemd 凭据 > `STORAGECHECK_SMTP_PASSWORD` > 配置里的密文；
+选了免认证则三者一律忽略。
 
 ## 只读命令
 
